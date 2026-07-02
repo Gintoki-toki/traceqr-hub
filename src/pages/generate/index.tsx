@@ -36,9 +36,11 @@ import {
   getCompanyBatches,
 } from "../../services/batches/batchService";
 import { downloadBatchPdf } from "../../services/pdf/qrBatchPdfService";
+import { downloadBatchCsv } from "../../services/pdf/qrBatchCsvService";
 
 function estimatePdfPages(quantity: number) {
   const qrPerPage = 20;
+
   return Math.ceil(quantity / qrPerPage);
 }
 
@@ -56,15 +58,14 @@ export default function GeneratePage() {
 
   const [isLoadingProducts, setIsLoadingProducts] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [isDownloadingCsv, setIsDownloadingCsv] = useState(false);
 
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
   const selectedProduct = useMemo(() => {
-    return (
-      products.find((product) => product.id === selectedProductId) ?? null
-    );
+    return products.find((product) => product.id === selectedProductId) ?? null;
   }, [products, selectedProductId]);
 
   const pages = estimatePdfPages(quantity);
@@ -153,7 +154,7 @@ export default function GeneratePage() {
       setGeneratedBatch(updatedBatch);
 
       setSuccessMessage(
-        "Lote generado correctamente. Ya puedes descargar el PDF."
+        "Lote generado correctamente. Ya puedes descargar el PDF o CSV."
       );
     } catch (error) {
       setErrorMessage(
@@ -173,7 +174,7 @@ export default function GeneratePage() {
     }
 
     try {
-      setIsDownloading(true);
+      setIsDownloadingPdf(true);
       setErrorMessage("");
       setSuccessMessage("");
 
@@ -187,7 +188,32 @@ export default function GeneratePage() {
         error instanceof Error ? error.message : "No se pudo descargar el PDF."
       );
     } finally {
-      setIsDownloading(false);
+      setIsDownloadingPdf(false);
+    }
+  }
+
+  async function handleDownloadCsv() {
+    if (!generatedBatch) {
+      setErrorMessage("Primero debes generar un lote.");
+      return;
+    }
+
+    try {
+      setIsDownloadingCsv(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      await downloadBatchCsv(generatedBatch);
+
+      setSuccessMessage(
+        "CSV generado correctamente. Los QR se derivaron en memoria sin guardar registros individuales."
+      );
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "No se pudo descargar el CSV."
+      );
+    } finally {
+      setIsDownloadingCsv(false);
     }
   }
 
@@ -201,7 +227,7 @@ export default function GeneratePage() {
             </h1>
 
             <p className="mt-2 text-slate-400">
-              Crea un lote, genera su hash maestro y descarga los QR en PDF para impresión.
+              Crea un lote, genera su hash maestro y exporta los QR en PDF o CSV.
             </p>
           </div>
 
@@ -226,8 +252,8 @@ export default function GeneratePage() {
               <CardTitle>Nuevo lote QR</CardTitle>
 
               <CardDescription>
-                Este flujo crea el lote real en Supabase y genera solo el hash del lote.
-                Los QR individuales se derivan en memoria al crear el PDF.
+                Este flujo crea el lote real en Supabase y genera solo el hash
+                del lote. Los QR individuales se derivan en memoria al exportar.
               </CardDescription>
             </CardHeader>
 
@@ -284,19 +310,34 @@ export default function GeneratePage() {
 
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-300">
-                      Plantilla PDF
+                      Formatos de salida
                     </label>
 
-                    <select
-                      disabled
-                      className="h-11 w-full rounded-xl border border-slate-800 bg-slate-950 px-4 text-sm text-slate-400 outline-none"
-                    >
-                      <option>A4 estándar - 20 QR por página</option>
-                    </select>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                        <FileText className="h-5 w-5 text-cyan-300" />
 
-                    <p className="mt-2 text-xs text-slate-500">
-                      La plantilla avanzada para máquinas de impresión la podemos agregar después.
-                    </p>
+                        <p className="mt-3 font-medium text-white">
+                          PDF para impresión
+                        </p>
+
+                        <p className="mt-1 text-xs text-slate-500">
+                          A4 estándar, 20 QR por página.
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                        <FileText className="h-5 w-5 text-cyan-300" />
+
+                        <p className="mt-3 font-medium text-white">
+                          CSV para máquina
+                        </p>
+
+                        <p className="mt-1 text-xs text-slate-500">
+                          Incluye short_code, token y qr_url.
+                        </p>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="rounded-xl border border-cyan-400/20 bg-cyan-400/10 p-4">
@@ -310,7 +351,7 @@ export default function GeneratePage() {
 
                         <p className="mt-1 text-sm text-cyan-200/80">
                           Se guardará solo el hash maestro del lote. Los QR se
-                          calculan al momento de crear el PDF.
+                          calculan al momento de crear el PDF o CSV.
                         </p>
                       </div>
                     </div>
@@ -345,7 +386,7 @@ export default function GeneratePage() {
                 <CardTitle>Vista previa</CardTitle>
 
                 <CardDescription>
-                  Resumen del lote antes de descargar el PDF.
+                  Resumen del lote antes de exportar.
                 </CardDescription>
               </CardHeader>
 
@@ -417,7 +458,7 @@ export default function GeneratePage() {
                 <CardTitle>Resultado</CardTitle>
 
                 <CardDescription>
-                  Cuando el lote esté generado podrás descargar el PDF.
+                  Cuando el lote esté generado podrás descargar PDF o CSV.
                 </CardDescription>
               </CardHeader>
 
@@ -456,21 +497,21 @@ export default function GeneratePage() {
                       </p>
                     </div>
 
-                    <div className="grid gap-3 md:grid-cols-2">
+                    <div className="grid gap-3 md:grid-cols-3">
                       <Button
                         type="button"
                         onClick={handleDownloadPdf}
-                        disabled={isDownloading}
+                        disabled={isDownloadingPdf}
                       >
-                        {isDownloading ? (
+                        {isDownloadingPdf ? (
                           <>
                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Generando PDF...
+                            PDF...
                           </>
                         ) : (
                           <>
                             <Download className="mr-2 h-4 w-4" />
-                            Descargar PDF
+                            PDF
                           </>
                         )}
                       </Button>
@@ -478,11 +519,30 @@ export default function GeneratePage() {
                       <Button
                         type="button"
                         variant="secondary"
-                        disabled={!generatedBatch}
+                        onClick={handleDownloadCsv}
+                        disabled={isDownloadingCsv}
+                      >
+                        {isDownloadingCsv ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            CSV...
+                          </>
+                        ) : (
+                          <>
+                            <FileText className="mr-2 h-4 w-4" />
+                            CSV
+                          </>
+                        )}
+                      </Button>
+
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={!generatedBatch || isDownloadingPdf}
                         onClick={handleDownloadPdf}
                       >
                         <Printer className="mr-2 h-4 w-4" />
-                        Preparar impresión
+                        Imprimir
                       </Button>
                     </div>
                   </div>
