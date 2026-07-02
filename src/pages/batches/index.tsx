@@ -35,6 +35,7 @@ import {
   getCompanyBatches,
 } from "../../services/batches/batchService";
 import { getCompanyProducts } from "../../services/products/productService";
+import { downloadBatchPdf } from "../../services/pdf/qrBatchPdfService";
 
 function getStatusLabel(status: BatchStatus) {
   const labels: Record<BatchStatus, string> = {
@@ -58,6 +59,10 @@ function getStatusVariant(status: BatchStatus) {
   return variants[status];
 }
 
+function canDownloadBatchPdf(batch: QRBatch) {
+  return batch.status === "generated" && Boolean(batch.batch_hash);
+}
+
 export default function BatchesPage() {
   const { user } = useAuth();
   const { company } = useCompany();
@@ -74,6 +79,9 @@ export default function BatchesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [generatingBatchId, setGeneratingBatchId] = useState<string | null>(
+    null
+  );
+  const [downloadingBatchId, setDownloadingBatchId] = useState<string | null>(
     null
   );
 
@@ -100,7 +108,7 @@ export default function BatchesPage() {
     0
   );
 
-  const readyPdfs = batches.filter((batch) => batch.pdf_ready).length;
+  const readyPdfs = batches.filter(canDownloadBatchPdf).length;
 
   async function loadData() {
     if (!company?.id) return;
@@ -117,7 +125,7 @@ export default function BatchesPage() {
       setBatches(batchData);
       setProducts(productData);
 
-      if (productData.length > 0) {
+      if (productData.length > 0 && !productId) {
         setProductId(productData[0].id);
       }
     } catch (error) {
@@ -190,18 +198,7 @@ export default function BatchesPage() {
 
       await generateBatchHash(batchId);
 
-      setBatches((currentBatches) =>
-        currentBatches.map((batch) =>
-          batch.id === batchId
-            ? {
-                ...batch,
-                status: "generated",
-                generated_count: batch.quantity,
-                pdf_ready: false,
-              }
-            : batch
-        )
-      );
+      await loadData();
 
       setSuccessMessage(
         "Lote generado correctamente. Los QR se derivarán desde el hash del lote al crear el PDF."
@@ -214,6 +211,26 @@ export default function BatchesPage() {
       );
     } finally {
       setGeneratingBatchId(null);
+    }
+  }
+
+  async function handleDownloadPdf(batch: QRBatch) {
+    try {
+      setDownloadingBatchId(batch.id);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      await downloadBatchPdf(batch);
+
+      setSuccessMessage(
+        "PDF generado correctamente. Los QR se derivaron en memoria sin guardar registros individuales."
+      );
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "No se pudo generar el PDF."
+      );
+    } finally {
+      setDownloadingBatchId(null);
     }
   }
 
@@ -294,7 +311,7 @@ export default function BatchesPage() {
           <Card>
             <CardContent className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-slate-400">PDF listos</p>
+                <p className="text-sm text-slate-400">PDF generables</p>
 
                 <h2 className="mt-2 text-3xl font-bold text-white">
                   {readyPdfs}
@@ -473,8 +490,8 @@ export default function BatchesPage() {
                         </td>
 
                         <td className="px-4 py-4">
-                          {batch.pdf_ready ? (
-                            <Badge variant="info">Disponible</Badge>
+                          {canDownloadBatchPdf(batch) ? (
+                            <Badge variant="info">Generable</Badge>
                           ) : (
                             <Badge variant="default">Pendiente</Badge>
                           )}
@@ -514,11 +531,19 @@ export default function BatchesPage() {
 
                             <button
                               type="button"
-                              disabled={!batch.pdf_ready}
+                              onClick={() => handleDownloadPdf(batch)}
+                              disabled={
+                                !canDownloadBatchPdf(batch) ||
+                                downloadingBatchId === batch.id
+                              }
                               title="Descargar PDF"
                               className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                             >
-                              <Download className="h-5 w-5" />
+                              {downloadingBatchId === batch.id ? (
+                                <Loader2 className="h-5 w-5 animate-spin" />
+                              ) : (
+                                <Download className="h-5 w-5" />
+                              )}
                             </button>
                           </div>
                         </td>
