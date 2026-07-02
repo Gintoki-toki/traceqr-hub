@@ -62,9 +62,9 @@ function sanitizeFileName(value: string) {
     .toLowerCase();
 }
 
-export async function downloadBatchPdf(batch: QRBatch) {
+function validateBatchForPdf(batch: QRBatch) {
   if (batch.status !== "generated") {
-    throw new Error("Solo puedes descargar PDF de lotes generados.");
+    throw new Error("Solo puedes generar PDF de lotes generados.");
   }
 
   if (!batch.batch_hash) {
@@ -74,6 +74,16 @@ export async function downloadBatchPdf(batch: QRBatch) {
   if (batch.quantity <= 0) {
     throw new Error("La cantidad del lote no es válida.");
   }
+}
+
+function getBatchPdfFileName(batch: QRBatch) {
+  return `${sanitizeFileName(batch.batch_code)}-${sanitizeFileName(
+    batch.product?.name ?? "producto"
+  )}.pdf`;
+}
+
+async function createBatchPdf(batch: QRBatch) {
+  validateBatchForPdf(batch);
 
   const pdf = new jsPDF({
     orientation: "portrait",
@@ -147,15 +157,53 @@ export async function downloadBatchPdf(batch: QRBatch) {
 
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(5.5);
-    pdf.text(batch.product?.sku ?? "Sin SKU", cellX + cellWidth / 2, qrY + qrSize + 8, {
-      align: "center",
-      maxWidth: cellWidth - 4,
-    });
+    pdf.text(
+      batch.product?.sku ?? "Sin SKU",
+      cellX + cellWidth / 2,
+      qrY + qrSize + 8,
+      {
+        align: "center",
+        maxWidth: cellWidth - 4,
+      }
+    );
   }
 
-  const fileName = `${sanitizeFileName(batch.batch_code)}-${sanitizeFileName(
-    batch.product?.name ?? "producto"
-  )}.pdf`;
+  return pdf;
+}
 
-  pdf.save(fileName);
+export async function downloadBatchPdf(batch: QRBatch) {
+  const pdf = await createBatchPdf(batch);
+
+  pdf.save(getBatchPdfFileName(batch));
+}
+
+export async function printBatchPdf(batch: QRBatch) {
+  const pdf = await createBatchPdf(batch);
+  const pdfBlob = pdf.output("blob");
+  const pdfUrl = URL.createObjectURL(pdfBlob);
+
+  const printWindow = window.open(pdfUrl, "_blank");
+
+  if (!printWindow) {
+    URL.revokeObjectURL(pdfUrl);
+    throw new Error(
+      "El navegador bloqueó la ventana de impresión. Permite ventanas emergentes para este sitio."
+    );
+  }
+
+  const printDelayInMs = 1200;
+
+  window.setTimeout(() => {
+    try {
+      printWindow.focus();
+      printWindow.print();
+    } catch {
+      // Algunos navegadores no permiten lanzar print automáticamente
+      // sobre el visor PDF, pero el archivo queda abierto en una pestaña.
+    }
+  }, printDelayInMs);
+
+  window.setTimeout(() => {
+    URL.revokeObjectURL(pdfUrl);
+  }, 60000);
 }

@@ -1,3 +1,5 @@
+// src/pages/batches/index.tsx
+
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -36,6 +38,7 @@ import {
 import { getCompanyProducts } from "../../services/products/productService";
 import { downloadBatchPdf } from "../../services/pdf/qrBatchPdfService";
 import { downloadBatchCsv } from "../../services/pdf/qrBatchCsvService";
+import { registerBatchExportEvent } from "../../services/history/createQrEventService";
 
 function getStatusLabel(status: BatchStatus) {
   const labels: Record<BatchStatus, string> = {
@@ -244,9 +247,12 @@ export default function BatchesPage() {
 
       await downloadBatchPdf(batch);
 
-      setSuccessMessage(
-        "PDF generado correctamente. Los QR se derivaron en memoria sin guardar registros individuales."
-      );
+      await registerBatchExportEvent({
+        batch,
+        eventType: "pdf_downloaded",
+      });
+
+      setSuccessMessage("PDF generado correctamente y registrado en el historial.");
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "No se pudo generar el PDF."
@@ -264,9 +270,12 @@ export default function BatchesPage() {
 
       await downloadBatchCsv(batch);
 
-      setSuccessMessage(
-        "CSV generado correctamente. Los QR se derivaron en memoria sin guardar registros individuales."
-      );
+      await registerBatchExportEvent({
+        batch,
+        eventType: "csv_downloaded",
+      });
+
+      setSuccessMessage("CSV generado correctamente y registrado en el historial.");
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "No se pudo generar el CSV."
@@ -386,7 +395,10 @@ export default function BatchesPage() {
                   Primero debes crear un producto en la sección Productos.
                 </div>
               ) : (
-                <form onSubmit={handleCreateBatch} className="grid gap-4 lg:grid-cols-4">
+                <form
+                  onSubmit={handleCreateBatch}
+                  className="grid gap-4 lg:grid-cols-4"
+                >
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-300">
                       Producto
@@ -419,7 +431,9 @@ export default function BatchesPage() {
                     min={1}
                     max={5000}
                     value={quantity}
-                    onChange={(event) => setQuantity(Number(event.target.value))}
+                    onChange={(event) =>
+                      setQuantity(Number(event.target.value))
+                    }
                     required
                   />
 

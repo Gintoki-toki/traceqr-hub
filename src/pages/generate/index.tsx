@@ -35,8 +35,12 @@ import {
   generateBatchHash,
   getCompanyBatches,
 } from "../../services/batches/batchService";
-import { downloadBatchPdf } from "../../services/pdf/qrBatchPdfService";
+import {
+  downloadBatchPdf,
+  printBatchPdf,
+} from "../../services/pdf/qrBatchPdfService";
 import { downloadBatchCsv } from "../../services/pdf/qrBatchCsvService";
+import { registerBatchExportEvent } from "../../services/history/createQrEventService";
 
 function estimatePdfPages(quantity: number) {
   const qrPerPage = 20;
@@ -60,6 +64,7 @@ export default function GeneratePage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [isDownloadingCsv, setIsDownloadingCsv] = useState(false);
+  const [isPreparingPrint, setIsPreparingPrint] = useState(false);
 
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -180,9 +185,12 @@ export default function GeneratePage() {
 
       await downloadBatchPdf(generatedBatch);
 
-      setSuccessMessage(
-        "PDF generado correctamente. Los QR se derivaron en memoria sin guardar registros individuales."
-      );
+      await registerBatchExportEvent({
+        batch: generatedBatch,
+        eventType: "pdf_downloaded",
+      });
+
+      setSuccessMessage("PDF generado correctamente y registrado en el historial.");
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "No se pudo descargar el PDF."
@@ -205,15 +213,50 @@ export default function GeneratePage() {
 
       await downloadBatchCsv(generatedBatch);
 
-      setSuccessMessage(
-        "CSV generado correctamente. Los QR se derivaron en memoria sin guardar registros individuales."
-      );
+      await registerBatchExportEvent({
+        batch: generatedBatch,
+        eventType: "csv_downloaded",
+      });
+
+      setSuccessMessage("CSV generado correctamente y registrado en el historial.");
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "No se pudo descargar el CSV."
       );
     } finally {
       setIsDownloadingCsv(false);
+    }
+  }
+
+  async function handlePreparePrint() {
+    if (!generatedBatch) {
+      setErrorMessage("Primero debes generar un lote.");
+      return;
+    }
+
+    try {
+      setIsPreparingPrint(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      await printBatchPdf(generatedBatch);
+
+      await registerBatchExportEvent({
+        batch: generatedBatch,
+        eventType: "print_prepared",
+      });
+
+      setSuccessMessage(
+        "Archivo de impresión abierto y registrado en el historial."
+      );
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo preparar la impresión."
+      );
+    } finally {
+      setIsPreparingPrint(false);
     }
   }
 
@@ -458,7 +501,8 @@ export default function GeneratePage() {
                 <CardTitle>Resultado</CardTitle>
 
                 <CardDescription>
-                  Cuando el lote esté generado podrás descargar PDF o CSV.
+                  Cuando el lote esté generado podrás descargar PDF, CSV o abrir
+                  la impresión.
                 </CardDescription>
               </CardHeader>
 
@@ -538,11 +582,20 @@ export default function GeneratePage() {
                       <Button
                         type="button"
                         variant="secondary"
-                        disabled={!generatedBatch || isDownloadingPdf}
-                        onClick={handleDownloadPdf}
+                        disabled={!generatedBatch || isPreparingPrint}
+                        onClick={handlePreparePrint}
                       >
-                        <Printer className="mr-2 h-4 w-4" />
-                        Imprimir
+                        {isPreparingPrint ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Imprimiendo...
+                          </>
+                        ) : (
+                          <>
+                            <Printer className="mr-2 h-4 w-4" />
+                            Imprimir
+                          </>
+                        )}
                       </Button>
                     </div>
                   </div>
