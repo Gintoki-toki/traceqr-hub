@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   CalendarClock,
-  CheckCircle2,
   Clock3,
   Database,
   FileText,
