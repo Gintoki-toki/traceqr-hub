@@ -1,16 +1,33 @@
-export type BatchStatus = "generated" | "processing" | "draft" | "failed";
+export type BatchStatus = "draft" | "processing" | "generated" | "failed";
+
+export interface BatchProduct {
+  id: string;
+  name: string;
+  sku: string;
+}
 
 export interface QRBatch {
   id: string;
-  batchCode: string;
+  company_id: string;
+  product_id: string;
+  batch_code: string;
   name: string;
-  productName: string;
-  productSku: string;
   quantity: number;
-  generatedCount: number;
+  generated_count: number;
+  batch_hash: string | null;
+  pdf_file_name: string | null;
+  pdf_ready: boolean;
   status: BatchStatus;
-  pdfReady: boolean;
-  pdfFileName: string;
-  createdAt: string;
-  createdBy: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  product: BatchProduct | null;
+}
+
+export interface CreateBatchPayload {
+  companyId: string;
+  userId: string;
+  productId: string;
+  name: string;
+  quantity: number;
 }

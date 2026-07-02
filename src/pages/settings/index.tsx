@@ -1,7 +1,10 @@
+import type { FormEvent } from "react";
+import { useEffect, useState } from "react";
 import {
   Building2,
   CheckCircle2,
   FileText,
+  Loader2,
   Printer,
   Save,
   ShieldCheck,
@@ -19,12 +22,83 @@ import {
   CardTitle,
 } from "../../components/ui/card/Card";
 
-import { mockCompany, mockCompanySettings } from "../../data/company";
+import { supabase } from "../../config/supabase";
+import { useCompany } from "../../contexts/CompanyContext";
 
 export default function SettingsPage() {
+  const { company, member, isLoading, errorMessage, refreshCompany } =
+    useCompany();
+
+  const [companyName, setCompanyName] = useState("");
+  const [companyEmail, setCompanyEmail] = useState("");
+  const [taxId, setTaxId] = useState("");
+  const [industry, setIndustry] = useState("");
+
+  const [defaultPdfTemplate, setDefaultPdfTemplate] = useState("A4 estándar");
+  const [defaultQrQuantity, setDefaultQrQuantity] = useState(500);
+
+  const [isSaving, setIsSaving] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
+  const [formError, setFormError] = useState("");
+
+  useEffect(() => {
+    if (!company) return;
+
+    setCompanyName(company.name ?? "");
+    setCompanyEmail(company.email ?? "");
+    setTaxId(company.tax_id ?? "");
+    setIndustry(company.industry ?? "");
+  }, [company]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!company?.id) {
+      setFormError("No se encontró la empresa actual.");
+      return;
+    }
+
+    if (!companyName || !companyEmail) {
+      setFormError("El nombre y el correo de la empresa son obligatorios.");
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      setFormError("");
+      setSuccessMessage("");
+
+      const { error } = await supabase
+        .from("companies")
+        .update({
+          name: companyName.trim(),
+          email: companyEmail.trim().toLowerCase(),
+          tax_id: taxId.trim() || null,
+          industry: industry.trim() || null,
+        })
+        .eq("id", company.id);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      await refreshCompany();
+
+      setSuccessMessage("Configuración actualizada correctamente.");
+    } catch (error) {
+      setFormError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo actualizar la configuración."
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   return (
     <DashboardLayout>
-      <div className="flex flex-col gap-8">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-8">
         <section className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-white">
@@ -32,15 +106,36 @@ export default function SettingsPage() {
             </h1>
 
             <p className="mt-2 text-slate-400">
-              Administra la información de la empresa y las preferencias de generación.
+              Administra la información real de la empresa y las preferencias de generación.
             </p>
           </div>
 
-          <Button>
-            <Save className="mr-2 h-4 w-4" />
-            Guardar cambios
+          <Button type="submit" disabled={isSaving || isLoading}>
+            {isSaving ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Guardando...
+              </>
+            ) : (
+              <>
+                <Save className="mr-2 h-4 w-4" />
+                Guardar cambios
+              </>
+            )}
           </Button>
         </section>
+
+        {(formError || errorMessage) && (
+          <div className="rounded-xl border border-red-400/20 bg-red-400/10 p-4 text-sm text-red-300">
+            {formError || errorMessage}
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-sm text-emerald-300">
+            {successMessage}
+          </div>
+        )}
 
         <section className="grid gap-4 md:grid-cols-3">
           <Card>
@@ -49,11 +144,11 @@ export default function SettingsPage() {
                 <p className="text-sm text-slate-400">Empresa</p>
 
                 <h2 className="mt-2 text-xl font-bold text-white">
-                  {mockCompany.name}
+                  {isLoading ? "Cargando..." : company?.name ?? "Sin empresa"}
                 </h2>
 
                 <p className="mt-1 text-sm text-slate-500">
-                  {mockCompany.industry}
+                  {company?.industry ?? "Sin industria"}
                 </p>
               </div>
 
@@ -68,13 +163,17 @@ export default function SettingsPage() {
               <p className="text-sm text-slate-400">Estado</p>
 
               <div className="mt-3">
-                <Badge variant="success">
-                  Activa
+                <Badge
+                  variant={company?.status === "active" ? "success" : "default"}
+                >
+                  {company?.status === "active" ? "Activa" : "Inactiva"}
                 </Badge>
               </div>
 
               <p className="mt-3 text-sm text-slate-500">
-                Empresa habilitada para generar lotes QR.
+                {company?.status === "active"
+                  ? "Empresa habilitada para generar lotes QR."
+                  : "Empresa sin acceso activo."}
               </p>
             </CardContent>
           </Card>
@@ -82,14 +181,14 @@ export default function SettingsPage() {
           <Card>
             <CardContent className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-slate-400">Seguridad</p>
+                <p className="text-sm text-slate-400">Tu rol</p>
 
                 <h2 className="mt-2 text-xl font-bold text-white">
-                  HMAC activo
+                  {member?.role ?? "Sin rol"}
                 </h2>
 
                 <p className="mt-1 text-sm text-slate-500">
-                  Generación criptográfica protegida.
+                  Permisos asociados al usuario actual.
                 </p>
               </div>
 
@@ -106,7 +205,7 @@ export default function SettingsPage() {
               <CardTitle>Información de la empresa</CardTitle>
 
               <CardDescription>
-                Estos datos identificarán a la empresa dentro de TraceQrHub.
+                Estos datos vienen de la tabla real <strong>companies</strong>.
               </CardDescription>
             </CardHeader>
 
@@ -114,32 +213,45 @@ export default function SettingsPage() {
               <div className="grid gap-5 md:grid-cols-2">
                 <Input
                   label="Nombre de la empresa"
-                  defaultValue={mockCompany.name}
+                  value={companyName}
+                  onChange={(event) => setCompanyName(event.target.value)}
+                  disabled={isLoading || isSaving}
+                  required
                 />
 
                 <Input
                   label="Correo empresarial"
-                  defaultValue={mockCompany.email}
+                  type="email"
+                  value={companyEmail}
+                  onChange={(event) => setCompanyEmail(event.target.value)}
+                  disabled={isLoading || isSaving}
+                  required
                 />
 
                 <Input
                   label="NIT / Tax ID"
-                  defaultValue={mockCompany.taxId}
+                  value={taxId}
+                  onChange={(event) => setTaxId(event.target.value)}
+                  disabled={isLoading || isSaving}
                 />
 
                 <Input
                   label="Industria"
-                  defaultValue={mockCompany.industry}
+                  value={industry}
+                  onChange={(event) => setIndustry(event.target.value)}
+                  disabled={isLoading || isSaving}
                 />
 
                 <Input
-                  label="País"
-                  defaultValue={mockCompany.country}
+                  label="ID de empresa"
+                  value={company?.id ?? ""}
+                  disabled
                 />
 
                 <Input
-                  label="Ciudad"
-                  defaultValue={mockCompany.city}
+                  label="Correo del miembro"
+                  value={member?.email ?? ""}
+                  disabled
                 />
               </div>
             </CardContent>
@@ -150,7 +262,7 @@ export default function SettingsPage() {
               <CardTitle>Preferencias de PDF</CardTitle>
 
               <CardDescription>
-                Configuración predeterminada para descarga e impresión.
+                Por ahora estas preferencias son locales. Luego podemos guardarlas en una tabla propia.
               </CardDescription>
             </CardHeader>
 
@@ -162,7 +274,10 @@ export default function SettingsPage() {
                   </label>
 
                   <select
-                    defaultValue={mockCompanySettings.defaultPdfTemplate}
+                    value={defaultPdfTemplate}
+                    onChange={(event) =>
+                      setDefaultPdfTemplate(event.target.value)
+                    }
                     className="h-11 w-full rounded-xl border border-slate-800 bg-slate-950 px-4 text-sm text-white outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20"
                   >
                     <option>A4 estándar</option>
@@ -174,7 +289,10 @@ export default function SettingsPage() {
                 <Input
                   label="Cantidad predeterminada de QR"
                   type="number"
-                  defaultValue={mockCompanySettings.defaultQrQuantity}
+                  value={defaultQrQuantity}
+                  onChange={(event) =>
+                    setDefaultQrQuantity(Number(event.target.value))
+                  }
                 />
 
                 <div className="space-y-3">
@@ -234,9 +352,7 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-3">
                   <CheckCircle2 className="h-5 w-5 text-emerald-300" />
 
-                  <p className="font-medium text-white">
-                    Empresa activa
-                  </p>
+                  <p className="font-medium text-white">Empresa activa</p>
                 </div>
 
                 <p className="mt-2 text-sm text-slate-400">
@@ -248,9 +364,7 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-3">
                   <CheckCircle2 className="h-5 w-5 text-emerald-300" />
 
-                  <p className="font-medium text-white">
-                    PDF habilitado
-                  </p>
+                  <p className="font-medium text-white">PDF habilitado</p>
                 </div>
 
                 <p className="mt-2 text-sm text-slate-400">
@@ -262,9 +376,7 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-3">
                   <CheckCircle2 className="h-5 w-5 text-emerald-300" />
 
-                  <p className="font-medium text-white">
-                    Seguridad activa
-                  </p>
+                  <p className="font-medium text-white">Seguridad activa</p>
                 </div>
 
                 <p className="mt-2 text-sm text-slate-400">
@@ -274,7 +386,7 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
-      </div>
+      </form>
     </DashboardLayout>
   );
 }

@@ -13,6 +13,8 @@ import UsersPage from "../pages/users";
 import SettingsPage from "../pages/settings";
 import NotFoundPage from "../pages/notfound";
 
+import ProtectedRoute from "./ProtectedRoute";
+
 export const router = createBrowserRouter([
   {
     path: "/",
@@ -28,31 +30,59 @@ export const router = createBrowserRouter([
   },
   {
     path: "/dashboard",
-    element: <DashboardPage />,
+    element: (
+      <ProtectedRoute>
+        <DashboardPage />
+      </ProtectedRoute>
+    ),
   },
   {
     path: "/products",
-    element: <ProductsPage />,
+    element: (
+      <ProtectedRoute>
+        <ProductsPage />
+      </ProtectedRoute>
+    ),
   },
   {
     path: "/batches",
-    element: <BatchesPage />,
+    element: (
+      <ProtectedRoute>
+        <BatchesPage />
+      </ProtectedRoute>
+    ),
   },
   {
     path: "/generate",
-    element: <GeneratePage />,
+    element: (
+      <ProtectedRoute>
+        <GeneratePage />
+      </ProtectedRoute>
+    ),
   },
   {
     path: "/history",
-    element: <HistoryPage />,
+    element: (
+      <ProtectedRoute>
+        <HistoryPage />
+      </ProtectedRoute>
+    ),
   },
   {
     path: "/users",
-    element: <UsersPage />,
+    element: (
+      <ProtectedRoute>
+        <UsersPage />
+      </ProtectedRoute>
+    ),
   },
   {
     path: "/settings",
-    element: <SettingsPage />,
+    element: (
+      <ProtectedRoute>
+        <SettingsPage />
+      </ProtectedRoute>
+    ),
   },
   {
     path: "*",

@@ -1,3 +1,5 @@
+import type { FormEvent } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowRight, Mail, LockKeyhole } from "lucide-react";
 
@@ -5,14 +7,48 @@ import AuthLayout from "../../../layouts/AuthLayout";
 import Button from "../../../components/ui/button/Button";
 import Input from "../../../components/ui/input/Input";
 import { APP_ROUTES, PUBLIC_ROUTES } from "../../../constants/routes";
+import { supabase } from "../../../config/supabase";
 
 export default function LoginPage() {
   const navigate = useNavigate();
 
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
-    navigate(APP_ROUTES.dashboard);
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setErrorMessage("");
+
+    if (!email || !password) {
+      setErrorMessage("Ingresa correo y contraseña.");
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) {
+        throw new Error("Correo o contraseña incorrectos.");
+      }
+
+      navigate(APP_ROUTES.dashboard);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo iniciar sesión."
+      );
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   return (
@@ -23,6 +59,12 @@ export default function LoginPage() {
       <form onSubmit={handleSubmit} className="space-y-5">
         <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
           <div className="space-y-5">
+            {errorMessage && (
+              <div className="rounded-xl border border-red-400/20 bg-red-400/10 p-4 text-sm text-red-300">
+                {errorMessage}
+              </div>
+            )}
+
             <div className="relative">
               <Mail className="pointer-events-none absolute left-3 top-[42px] h-4 w-4 text-slate-500" />
 
@@ -31,6 +73,9 @@ export default function LoginPage() {
                 type="email"
                 placeholder="empresa@correo.com"
                 className="pl-10"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                required
               />
             </div>
 
@@ -42,6 +87,9 @@ export default function LoginPage() {
                 type="password"
                 placeholder="••••••••"
                 className="pl-10"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
               />
             </div>
 
@@ -62,9 +110,14 @@ export default function LoginPage() {
               </button>
             </div>
 
-            <Button type="submit" size="lg" className="w-full">
-              Iniciar sesión
-              <ArrowRight className="ml-2 h-5 w-5" />
+            <Button
+              type="submit"
+              size="lg"
+              className="w-full"
+              disabled={isLoading}
+            >
+              {isLoading ? "Iniciando sesión..." : "Iniciar sesión"}
+              {!isLoading && <ArrowRight className="ml-2 h-5 w-5" />}
             </Button>
           </div>
         </div>
