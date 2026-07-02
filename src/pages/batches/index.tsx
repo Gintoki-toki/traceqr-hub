@@ -1,5 +1,3 @@
-// src/pages/batches/index.tsx
-
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -9,6 +7,7 @@ import {
   Loader2,
   PlayCircle,
   Plus,
+  Printer,
   QrCode,
   Search,
   X,
@@ -36,7 +35,10 @@ import {
   getCompanyBatches,
 } from "../../services/batches/batchService";
 import { getCompanyProducts } from "../../services/products/productService";
-import { downloadBatchPdf } from "../../services/pdf/qrBatchPdfService";
+import {
+  downloadBatchPdf,
+  printBatchPdf,
+} from "../../services/pdf/qrBatchPdfService";
 import { downloadBatchCsv } from "../../services/pdf/qrBatchCsvService";
 import { registerBatchExportEvent } from "../../services/history/createQrEventService";
 
@@ -100,6 +102,7 @@ export default function BatchesPage() {
   const [downloadingCsvBatchId, setDownloadingCsvBatchId] = useState<
     string | null
   >(null);
+  const [printingBatchId, setPrintingBatchId] = useState<string | null>(null);
 
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -282,6 +285,33 @@ export default function BatchesPage() {
       );
     } finally {
       setDownloadingCsvBatchId(null);
+    }
+  }
+
+  async function handlePrintBatch(batch: QRBatch) {
+    try {
+      setPrintingBatchId(batch.id);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      await printBatchPdf(batch);
+
+      await registerBatchExportEvent({
+        batch,
+        eventType: "print_prepared",
+      });
+
+      setSuccessMessage(
+        "Archivo de impresión abierto y registrado en el historial."
+      );
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo preparar la impresión."
+      );
+    } finally {
+      setPrintingBatchId(null);
     }
   }
 
@@ -469,7 +499,8 @@ export default function BatchesPage() {
                 <CardTitle>Listado de lotes</CardTitle>
 
                 <CardDescription>
-                  Genera el hash del lote y exporta en PDF o CSV sin llenar la tabla qr_codes.
+                  Genera el hash del lote y exporta en PDF o CSV sin llenar la
+                  tabla qr_codes.
                 </CardDescription>
               </div>
 
@@ -507,7 +538,7 @@ export default function BatchesPage() {
             ) : (
               <div className="overflow-hidden rounded-xl border border-slate-800">
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[980px] border-collapse">
+                  <table className="w-full min-w-[1060px] border-collapse">
                     <thead className="bg-slate-950">
                       <tr className="border-b border-slate-800 text-left text-xs uppercase tracking-wide text-slate-500">
                         <th className="px-4 py-4 font-semibold">Lote</th>
@@ -530,6 +561,7 @@ export default function BatchesPage() {
                           downloadingPdfBatchId === batch.id;
                         const isDownloadingCsv =
                           downloadingCsvBatchId === batch.id;
+                        const isPrinting = printingBatchId === batch.id;
                         const canExport = canExportBatch(batch);
 
                         return (
@@ -646,6 +678,20 @@ export default function BatchesPage() {
                                     <Loader2 className="h-5 w-5 animate-spin" />
                                   ) : (
                                     "CSV"
+                                  )}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handlePrintBatch(batch)}
+                                  disabled={!canExport || isPrinting}
+                                  title="Imprimir"
+                                  className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  {isPrinting ? (
+                                    <Loader2 className="h-5 w-5 animate-spin" />
+                                  ) : (
+                                    <Printer className="h-5 w-5" />
                                   )}
                                 </button>
                               </div>
