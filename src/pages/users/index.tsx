@@ -1,16 +1,23 @@
+import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
   Crown,
+  KeyRound,
   Loader2,
   Mail,
+  Plus,
   Search,
   ShieldCheck,
   UserCheck,
+  UserPlus,
   Users,
   UserX,
+  X,
 } from "lucide-react";
 
 import DashboardLayout from "../../layouts/DashboardLayout";
+import Button from "../../components/ui/button/Button";
+import Input from "../../components/ui/input/Input";
 import Badge from "../../components/ui/badge/Badge";
 import {
   Card,
@@ -22,7 +29,11 @@ import {
 
 import { useCompany } from "../../contexts/CompanyContext";
 import type { CompanyMemberProfile } from "../../types/companyProfile";
-import { getCompanyMembers } from "../../services/users/companyMemberService";
+import {
+  getCompanyMembers,
+  inviteCompanyMember,
+  type InviteCompanyMemberRole,
+} from "../../services/users/companyMemberService";
 
 function getRoleLabel(role: CompanyMemberProfile["role"]) {
   const labels: Record<CompanyMemberProfile["role"], string> = {
@@ -70,14 +81,30 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function canInviteUsers(member: CompanyMemberProfile | null) {
+  return member?.role === "owner" || member?.role === "admin";
+}
+
 export default function UsersPage() {
   const { company, member } = useCompany();
 
   const [members, setMembers] = useState<CompanyMemberProfile[]>([]);
   const [search, setSearch] = useState("");
 
+  const [showInviteForm, setShowInviteForm] = useState(false);
+  const [inviteDisplayName, setInviteDisplayName] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] =
+    useState<InviteCompanyMemberRole>("operator");
+  const [invitePassword, setInvitePassword] = useState("");
+
   const [isLoading, setIsLoading] = useState(true);
+  const [isInviting, setIsInviting] = useState(false);
+
   const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+
+  const userCanInvite = canInviteUsers(member);
 
   const filteredMembers = useMemo(() => {
     const value = search.toLowerCase().trim();
@@ -96,6 +123,7 @@ export default function UsersPage() {
 
   const stats = useMemo(() => {
     const totalMembers = members.length;
+
     const activeMembers = members.filter(
       (companyMember) => companyMember.status === "active"
     ).length;
@@ -151,6 +179,67 @@ export default function UsersPage() {
     loadMembers();
   }, [company?.id]);
 
+  async function handleInviteUser(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!company?.id) {
+      setErrorMessage("No se encontró la empresa actual.");
+      return;
+    }
+
+    if (!userCanInvite) {
+      setErrorMessage("No tienes permisos para invitar usuarios.");
+      return;
+    }
+
+    if (!inviteDisplayName.trim()) {
+      setErrorMessage("Escribe el nombre del usuario.");
+      return;
+    }
+
+    if (!inviteEmail.trim()) {
+      setErrorMessage("Escribe el correo del usuario.");
+      return;
+    }
+
+    if (invitePassword.length < 8) {
+      setErrorMessage("La contraseña debe tener mínimo 8 caracteres.");
+      return;
+    }
+
+    try {
+      setIsInviting(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      await inviteCompanyMember({
+        companyId: company.id,
+        displayName: inviteDisplayName,
+        email: inviteEmail,
+        role: inviteRole,
+        password: invitePassword,
+      });
+
+      await loadMembers();
+
+      setInviteDisplayName("");
+      setInviteEmail("");
+      setInviteRole("operator");
+      setInvitePassword("");
+      setShowInviteForm(false);
+
+      setSuccessMessage("Usuario invitado correctamente.");
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo invitar el usuario."
+      );
+    } finally {
+      setIsInviting(false);
+    }
+  }
+
   return (
     <DashboardLayout>
       <div className="flex flex-col gap-8">
@@ -165,13 +254,143 @@ export default function UsersPage() {
             </p>
           </div>
 
-          <Badge variant="info">Tabla company_members</Badge>
+          <div className="flex flex-wrap items-center gap-3">
+            <Badge variant="info">Tabla company_members</Badge>
+
+            {userCanInvite && (
+              <Button
+                type="button"
+                onClick={() => setShowInviteForm((value) => !value)}
+              >
+                {showInviteForm ? (
+                  <>
+                    <X className="mr-2 h-4 w-4" />
+                    Cancelar
+                  </>
+                ) : (
+                  <>
+                    <UserPlus className="mr-2 h-4 w-4" />
+                    Invitar usuario
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
         </section>
 
         {errorMessage && (
           <div className="rounded-xl border border-red-400/20 bg-red-400/10 p-4 text-sm text-red-300">
             {errorMessage}
           </div>
+        )}
+
+        {successMessage && (
+          <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-sm text-emerald-300">
+            {successMessage}
+          </div>
+        )}
+
+        {showInviteForm && userCanInvite && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Invitar nuevo usuario</CardTitle>
+
+              <CardDescription>
+                Crea un usuario en Supabase Auth y lo asocia a la empresa como
+                administrador u operador.
+              </CardDescription>
+            </CardHeader>
+
+            <CardContent>
+              <form
+                onSubmit={handleInviteUser}
+                className="grid gap-4 xl:grid-cols-5"
+              >
+                <Input
+                  label="Nombre"
+                  placeholder="Ej: Ana Pérez"
+                  value={inviteDisplayName}
+                  onChange={(event) => setInviteDisplayName(event.target.value)}
+                  required
+                />
+
+                <Input
+                  label="Correo"
+                  type="email"
+                  placeholder="usuario@empresa.com"
+                  value={inviteEmail}
+                  onChange={(event) => setInviteEmail(event.target.value)}
+                  required
+                />
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-slate-300">
+                    Rol
+                  </label>
+
+                  <select
+                    value={inviteRole}
+                    onChange={(event) =>
+                      setInviteRole(
+                        event.target.value as InviteCompanyMemberRole
+                      )
+                    }
+                    className="h-11 w-full rounded-xl border border-slate-800 bg-slate-950 px-4 text-sm text-white outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20"
+                  >
+                    <option value="operator">Operador</option>
+                    <option value="admin">Administrador</option>
+                  </select>
+                </div>
+
+                <Input
+                  label="Contraseña temporal"
+                  type="password"
+                  placeholder="Mínimo 8 caracteres"
+                  value={invitePassword}
+                  onChange={(event) => setInvitePassword(event.target.value)}
+                  required
+                />
+
+                <div className="flex items-end">
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={isInviting}
+                  >
+                    {isInviting ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Invitando...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="mr-2 h-4 w-4" />
+                        Invitar
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </form>
+
+              <div className="mt-4 rounded-xl border border-cyan-400/20 bg-cyan-400/10 p-4">
+                <div className="flex items-start gap-3">
+                  <KeyRound className="mt-0.5 h-5 w-5 text-cyan-300" />
+
+                  <div>
+                    <p className="font-medium text-cyan-100">
+                      Acceso inicial
+                    </p>
+
+                    <p className="mt-1 text-sm text-cyan-200/80">
+                      El usuario podrá iniciar sesión con el correo y la
+                      contraseña temporal que le asignes. Más adelante podemos
+                      agregar cambio obligatorio de contraseña.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         )}
 
         {isLoading ? (
@@ -468,27 +687,28 @@ export default function UsersPage() {
 
                           <div>
                             <p className="font-medium text-cyan-100">
-                              Lectura real activa
+                              Invitaciones seguras
                             </p>
 
                             <p className="mt-1 text-sm text-cyan-200/80">
-                              Esta pantalla ya consulta los miembros reales de
-                              company_members.
+                              Solo propietarios o administradores pueden invitar
+                              nuevos usuarios mediante Edge Function.
                             </p>
                           </div>
                         </div>
                       </div>
 
-                      <div className="rounded-xl border border-amber-400/20 bg-amber-400/10 p-4">
-                        <p className="font-medium text-amber-100">
-                          Próximo módulo
-                        </p>
+                      {!userCanInvite && (
+                        <div className="rounded-xl border border-amber-400/20 bg-amber-400/10 p-4">
+                          <p className="font-medium text-amber-100">
+                            Permisos limitados
+                          </p>
 
-                        <p className="mt-1 text-sm text-amber-200/80">
-                          Después podemos agregar invitación de usuarios con una
-                          Edge Function segura para crear miembros nuevos.
-                        </p>
-                      </div>
+                          <p className="mt-1 text-sm text-amber-200/80">
+                            Tu rol actual no permite invitar usuarios.
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>

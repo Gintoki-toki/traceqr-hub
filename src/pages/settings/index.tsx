@@ -3,9 +3,10 @@ import { useEffect, useState } from "react";
 import {
   Building2,
   CheckCircle2,
-  FileText,
+  KeyRound,
   Loader2,
-  Printer,
+  Lock,
+  Mail,
   Save,
   ShieldCheck,
 } from "lucide-react";
@@ -25,21 +26,31 @@ import {
 import { supabase } from "../../config/supabase";
 import { useCompany } from "../../contexts/CompanyContext";
 
+function canEditCompanySettings(role?: string | null) {
+  return role === "owner" || role === "admin";
+}
+
+function getRoleLabel(role?: string | null) {
+  if (role === "owner") return "Propietario";
+  if (role === "admin") return "Administrador";
+  if (role === "operator") return "Operador";
+
+  return "Sin rol";
+}
+
 export default function SettingsPage() {
-  const { company, member, isLoading, errorMessage, refreshCompany } =
-    useCompany();
+  const { company, member, refreshCompany } = useCompany();
 
   const [companyName, setCompanyName] = useState("");
   const [companyEmail, setCompanyEmail] = useState("");
   const [taxId, setTaxId] = useState("");
   const [industry, setIndustry] = useState("");
 
-  const [defaultPdfTemplate, setDefaultPdfTemplate] = useState("A4 estándar");
-  const [defaultQrQuantity, setDefaultQrQuantity] = useState(500);
-
   const [isSaving, setIsSaving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
-  const [formError, setFormError] = useState("");
+
+  const userCanEdit = canEditCompanySettings(member?.role);
 
   useEffect(() => {
     if (!company) return;
@@ -50,22 +61,34 @@ export default function SettingsPage() {
     setIndustry(company.industry ?? "");
   }, [company]);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSaveSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!company?.id) {
-      setFormError("No se encontró la empresa actual.");
+      setErrorMessage("No se encontró la empresa actual.");
       return;
     }
 
-    if (!companyName || !companyEmail) {
-      setFormError("El nombre y el correo de la empresa son obligatorios.");
+    if (!userCanEdit) {
+      setErrorMessage(
+        "No tienes permisos para editar la configuración de la empresa."
+      );
+      return;
+    }
+
+    if (!companyName.trim()) {
+      setErrorMessage("El nombre de la empresa es obligatorio.");
+      return;
+    }
+
+    if (!companyEmail.trim()) {
+      setErrorMessage("El correo de la empresa es obligatorio.");
       return;
     }
 
     try {
       setIsSaving(true);
-      setFormError("");
+      setErrorMessage("");
       setSuccessMessage("");
 
       const { error } = await supabase
@@ -75,6 +98,7 @@ export default function SettingsPage() {
           email: companyEmail.trim().toLowerCase(),
           tax_id: taxId.trim() || null,
           industry: industry.trim() || null,
+          updated_at: new Date().toISOString(),
         })
         .eq("id", company.id);
 
@@ -86,7 +110,7 @@ export default function SettingsPage() {
 
       setSuccessMessage("Configuración actualizada correctamente.");
     } catch (error) {
-      setFormError(
+      setErrorMessage(
         error instanceof Error
           ? error.message
           : "No se pudo actualizar la configuración."
@@ -98,7 +122,7 @@ export default function SettingsPage() {
 
   return (
     <DashboardLayout>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-8">
+      <div className="flex flex-col gap-8">
         <section className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-white">
@@ -106,28 +130,23 @@ export default function SettingsPage() {
             </h1>
 
             <p className="mt-2 text-slate-400">
-              Administra la información real de la empresa y las preferencias de generación.
+              Información principal y permisos de configuración de{" "}
+              {company?.name ?? "tu empresa"}.
             </p>
           </div>
 
-          <Button type="submit" disabled={isSaving || isLoading}>
-            {isSaving ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Guardando...
-              </>
-            ) : (
-              <>
-                <Save className="mr-2 h-4 w-4" />
-                Guardar cambios
-              </>
-            )}
-          </Button>
+          <div className="flex flex-wrap items-center gap-3">
+            <Badge variant="info">Empresa</Badge>
+
+            <Badge variant={userCanEdit ? "success" : "default"}>
+              {getRoleLabel(member?.role)}
+            </Badge>
+          </div>
         </section>
 
-        {(formError || errorMessage) && (
+        {errorMessage && (
           <div className="rounded-xl border border-red-400/20 bg-red-400/10 p-4 text-sm text-red-300">
-            {formError || errorMessage}
+            {errorMessage}
           </div>
         )}
 
@@ -137,256 +156,224 @@ export default function SettingsPage() {
           </div>
         )}
 
-        <section className="grid gap-4 md:grid-cols-3">
-          <Card>
-            <CardContent className="flex items-center justify-between">
+        {!userCanEdit && (
+          <div className="rounded-xl border border-amber-400/20 bg-amber-400/10 p-4">
+            <div className="flex items-start gap-3">
+              <Lock className="mt-0.5 h-5 w-5 text-amber-300" />
+
               <div>
-                <p className="text-sm text-slate-400">Empresa</p>
+                <p className="font-medium text-amber-100">
+                  Permisos limitados
+                </p>
 
-                <h2 className="mt-2 text-xl font-bold text-white">
-                  {isLoading ? "Cargando..." : company?.name ?? "Sin empresa"}
-                </h2>
-
-                <p className="mt-1 text-sm text-slate-500">
-                  {company?.industry ?? "Sin industria"}
+                <p className="mt-1 text-sm text-amber-200/80">
+                  Puedes ver la configuración de la empresa, pero solo un
+                  propietario o administrador puede modificar estos datos.
                 </p>
               </div>
+            </div>
+          </div>
+        )}
 
-              <div className="rounded-2xl bg-cyan-400/10 p-3 text-cyan-300">
-                <Building2 className="h-6 w-6" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent>
-              <p className="text-sm text-slate-400">Estado</p>
-
-              <div className="mt-3">
-                <Badge
-                  variant={company?.status === "active" ? "success" : "default"}
-                >
-                  {company?.status === "active" ? "Activa" : "Inactiva"}
-                </Badge>
-              </div>
-
-              <p className="mt-3 text-sm text-slate-500">
-                {company?.status === "active"
-                  ? "Empresa habilitada para generar lotes QR."
-                  : "Empresa sin acceso activo."}
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-400">Tu rol</p>
-
-                <h2 className="mt-2 text-xl font-bold text-white">
-                  {member?.role ?? "Sin rol"}
-                </h2>
-
-                <p className="mt-1 text-sm text-slate-500">
-                  Permisos asociados al usuario actual.
-                </p>
-              </div>
-
-              <div className="rounded-2xl bg-cyan-400/10 p-3 text-cyan-300">
-                <ShieldCheck className="h-6 w-6" />
-              </div>
-            </CardContent>
-          </Card>
-        </section>
-
-        <section className="grid gap-6 xl:grid-cols-[1fr_0.8fr]">
+        <section className="grid gap-6 xl:grid-cols-[1fr_0.7fr]">
           <Card>
             <CardHeader>
-              <CardTitle>Información de la empresa</CardTitle>
+              <CardTitle>Datos de la empresa</CardTitle>
 
               <CardDescription>
-                Estos datos vienen de la tabla real <strong>companies</strong>.
+                Información cargada desde la tabla real{" "}
+                <strong>companies</strong>.
               </CardDescription>
             </CardHeader>
 
             <CardContent>
-              <div className="grid gap-5 md:grid-cols-2">
+              <form onSubmit={handleSaveSettings} className="space-y-5">
                 <Input
                   label="Nombre de la empresa"
+                  placeholder="Ej: DokyVet Colombia"
                   value={companyName}
                   onChange={(event) => setCompanyName(event.target.value)}
-                  disabled={isLoading || isSaving}
+                  disabled={!userCanEdit || isSaving}
                   required
                 />
 
                 <Input
-                  label="Correo empresarial"
+                  label="Correo de la empresa"
                   type="email"
+                  placeholder="empresa@correo.com"
                   value={companyEmail}
                   onChange={(event) => setCompanyEmail(event.target.value)}
-                  disabled={isLoading || isSaving}
+                  disabled={!userCanEdit || isSaving}
                   required
                 />
 
                 <Input
-                  label="NIT / Tax ID"
+                  label="NIT / ID fiscal"
+                  placeholder="Ej: 900123456-7"
                   value={taxId}
                   onChange={(event) => setTaxId(event.target.value)}
-                  disabled={isLoading || isSaving}
+                  disabled={!userCanEdit || isSaving}
                 />
 
                 <Input
                   label="Industria"
+                  placeholder="Ej: Veterinaria"
                   value={industry}
                   onChange={(event) => setIndustry(event.target.value)}
-                  disabled={isLoading || isSaving}
+                  disabled={!userCanEdit || isSaving}
                 />
 
-                <Input
-                  label="ID de empresa"
-                  value={company?.id ?? ""}
-                  disabled
-                />
-
-                <Input
-                  label="Correo del miembro"
-                  value={member?.email ?? ""}
-                  disabled
-                />
-              </div>
+                {userCanEdit ? (
+                  <Button type="submit" disabled={isSaving}>
+                    {isSaving ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Guardando...
+                      </>
+                    ) : (
+                      <>
+                        <Save className="mr-2 h-4 w-4" />
+                        Guardar cambios
+                      </>
+                    )}
+                  </Button>
+                ) : (
+                  <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-sm text-slate-400">
+                    Los campos están bloqueados porque tu rol actual no permite
+                    editar la configuración.
+                  </div>
+                )}
+              </form>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Preferencias de PDF</CardTitle>
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Resumen</CardTitle>
 
-              <CardDescription>
-                Por ahora estas preferencias son locales. Luego podemos guardarlas en una tabla propia.
-              </CardDescription>
-            </CardHeader>
+                <CardDescription>
+                  Estado actual de la empresa y del usuario.
+                </CardDescription>
+              </CardHeader>
 
-            <CardContent>
-              <div className="space-y-5">
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-300">
-                    Plantilla PDF predeterminada
-                  </label>
-
-                  <select
-                    value={defaultPdfTemplate}
-                    onChange={(event) =>
-                      setDefaultPdfTemplate(event.target.value)
-                    }
-                    className="h-11 w-full rounded-xl border border-slate-800 bg-slate-950 px-4 text-sm text-white outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20"
-                  >
-                    <option>A4 estándar</option>
-                    <option>A4 compacto</option>
-                    <option>Etiquetas adhesivas</option>
-                  </select>
-                </div>
-
-                <Input
-                  label="Cantidad predeterminada de QR"
-                  type="number"
-                  value={defaultQrQuantity}
-                  onChange={(event) =>
-                    setDefaultQrQuantity(Number(event.target.value))
-                  }
-                />
-
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 p-4">
-                    <div className="flex items-center gap-3">
-                      <FileText className="h-5 w-5 text-cyan-300" />
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                    <div className="flex items-start gap-3">
+                      <Building2 className="mt-0.5 h-5 w-5 text-cyan-300" />
 
                       <div>
-                        <p className="font-medium text-white">
-                          Permitir descarga PDF
-                        </p>
+                        <p className="text-sm text-slate-400">Empresa</p>
 
-                        <p className="text-sm text-slate-400">
-                          Los usuarios podrán descargar lotes en PDF.
+                        <p className="mt-1 font-semibold text-white">
+                          {company?.name ?? "Sin empresa"}
                         </p>
                       </div>
                     </div>
-
-                    <Badge variant="success">Activo</Badge>
                   </div>
 
-                  <div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 p-4">
-                    <div className="flex items-center gap-3">
-                      <Printer className="h-5 w-5 text-cyan-300" />
+                  <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                    <div className="flex items-start gap-3">
+                      <Mail className="mt-0.5 h-5 w-5 text-cyan-300" />
 
                       <div>
-                        <p className="font-medium text-white">
-                          Impresión directa
-                        </p>
+                        <p className="text-sm text-slate-400">Correo</p>
 
-                        <p className="text-sm text-slate-400">
-                          Habilita la opción de imprimir desde el navegador.
+                        <p className="mt-1 font-semibold text-white">
+                          {company?.email ?? "Sin correo"}
                         </p>
                       </div>
                     </div>
+                  </div>
 
-                    <Badge variant="success">Activo</Badge>
+                  <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                    <div className="flex items-start gap-3">
+                      <KeyRound className="mt-0.5 h-5 w-5 text-cyan-300" />
+
+                      <div>
+                        <p className="text-sm text-slate-400">Tu rol</p>
+
+                        <p className="mt-1 font-semibold text-white">
+                          {getRoleLabel(member?.role)}
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Permisos</CardTitle>
+
+                <CardDescription>
+                  Control visual de acceso según rol.
+                </CardDescription>
+              </CardHeader>
+
+              <CardContent>
+                <div className="space-y-4">
+                  {userCanEdit ? (
+                    <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4">
+                      <div className="flex items-start gap-3">
+                        <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-300" />
+
+                        <div>
+                          <p className="font-medium text-emerald-100">
+                            Edición permitida
+                          </p>
+
+                          <p className="mt-1 text-sm text-emerald-200/80">
+                            Tu rol permite modificar la información principal
+                            de la empresa.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-amber-400/20 bg-amber-400/10 p-4">
+                      <div className="flex items-start gap-3">
+                        <Lock className="mt-0.5 h-5 w-5 text-amber-300" />
+
+                        <div>
+                          <p className="font-medium text-amber-100">
+                            Solo lectura
+                          </p>
+
+                          <p className="mt-1 text-sm text-amber-200/80">
+                            Tu rol actual solo permite consultar esta
+                            información.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="rounded-xl border border-cyan-400/20 bg-cyan-400/10 p-4">
+                    <div className="flex items-start gap-3">
+                      <ShieldCheck className="mt-0.5 h-5 w-5 text-cyan-300" />
+
+                      <div>
+                        <p className="font-medium text-cyan-100">
+                          Seguridad por RLS
+                        </p>
+
+                        <p className="mt-1 text-sm text-cyan-200/80">
+                          Aunque la interfaz bloquee o permita acciones, la base
+                          de datos también valida permisos con Row Level
+                          Security.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </section>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Estado de configuración</CardTitle>
-
-            <CardDescription>
-              Resumen de capacidades habilitadas para la empresa.
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent>
-            <div className="grid gap-4 md:grid-cols-3">
-              <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                <div className="flex items-center gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-emerald-300" />
-
-                  <p className="font-medium text-white">Empresa activa</p>
-                </div>
-
-                <p className="mt-2 text-sm text-slate-400">
-                  Puede crear productos, lotes y PDFs.
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                <div className="flex items-center gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-emerald-300" />
-
-                  <p className="font-medium text-white">PDF habilitado</p>
-                </div>
-
-                <p className="mt-2 text-sm text-slate-400">
-                  Los lotes podrán descargarse para impresión.
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                <div className="flex items-center gap-3">
-                  <CheckCircle2 className="h-5 w-5 text-emerald-300" />
-
-                  <p className="font-medium text-white">Seguridad activa</p>
-                </div>
-
-                <p className="mt-2 text-sm text-slate-400">
-                  Los QR se generarán mediante HMAC-SHA256 y SHA-512.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </form>
+      </div>
     </DashboardLayout>
   );
 }
