@@ -17,10 +17,7 @@ async function sha512(message: string) {
 }
 
 function getScanBaseUrl() {
-  return (
-    import.meta.env.VITE_TRACEQR_SCAN_BASE_URL ??
-    "https://traceqr.app/scan"
-  );
+  return import.meta.env.VITE_TRACEQR_SCAN_BASE_URL ?? "https://traceqr.app/scan";
 }
 
 function getShortCode(batch: QRBatch, index: number) {

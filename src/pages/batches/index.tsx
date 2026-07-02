@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Boxes,
   Download,
-  Eye,
   FileText,
   Loader2,
   PlayCircle,
@@ -36,6 +35,7 @@ import {
 } from "../../services/batches/batchService";
 import { getCompanyProducts } from "../../services/products/productService";
 import { downloadBatchPdf } from "../../services/pdf/qrBatchPdfService";
+import { downloadBatchCsv } from "../../services/pdf/qrBatchCsvService";
 
 function getStatusLabel(status: BatchStatus) {
   const labels: Record<BatchStatus, string> = {
@@ -59,8 +59,18 @@ function getStatusVariant(status: BatchStatus) {
   return variants[status];
 }
 
-function canDownloadBatchPdf(batch: QRBatch) {
+function canExportBatch(batch: QRBatch) {
   return batch.status === "generated" && Boolean(batch.batch_hash);
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("es-CO", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
 export default function BatchesPage() {
@@ -81,9 +91,12 @@ export default function BatchesPage() {
   const [generatingBatchId, setGeneratingBatchId] = useState<string | null>(
     null
   );
-  const [downloadingBatchId, setDownloadingBatchId] = useState<string | null>(
-    null
-  );
+  const [downloadingPdfBatchId, setDownloadingPdfBatchId] = useState<
+    string | null
+  >(null);
+  const [downloadingCsvBatchId, setDownloadingCsvBatchId] = useState<
+    string | null
+  >(null);
 
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -108,7 +121,7 @@ export default function BatchesPage() {
     0
   );
 
-  const readyPdfs = batches.filter(canDownloadBatchPdf).length;
+  const exportableBatches = batches.filter(canExportBatch).length;
 
   async function loadData() {
     if (!company?.id) return;
@@ -156,8 +169,18 @@ export default function BatchesPage() {
       return;
     }
 
-    if (!batchName || quantity <= 0) {
-      setErrorMessage("El nombre del lote y la cantidad son obligatorios.");
+    if (!batchName.trim()) {
+      setErrorMessage("Escribe un nombre para el lote.");
+      return;
+    }
+
+    if (quantity <= 0) {
+      setErrorMessage("La cantidad debe ser mayor a 0.");
+      return;
+    }
+
+    if (quantity > 5000) {
+      setErrorMessage("Por ahora el máximo recomendado es 5000 QR por lote.");
       return;
     }
 
@@ -197,11 +220,10 @@ export default function BatchesPage() {
       setSuccessMessage("");
 
       await generateBatchHash(batchId);
-
       await loadData();
 
       setSuccessMessage(
-        "Lote generado correctamente. Los QR se derivarán desde el hash del lote al crear el PDF."
+        "Lote generado correctamente. Los QR se derivarán desde el hash del lote al crear el PDF o CSV."
       );
     } catch (error) {
       setErrorMessage(
@@ -216,7 +238,7 @@ export default function BatchesPage() {
 
   async function handleDownloadPdf(batch: QRBatch) {
     try {
-      setDownloadingBatchId(batch.id);
+      setDownloadingPdfBatchId(batch.id);
       setErrorMessage("");
       setSuccessMessage("");
 
@@ -230,7 +252,27 @@ export default function BatchesPage() {
         error instanceof Error ? error.message : "No se pudo generar el PDF."
       );
     } finally {
-      setDownloadingBatchId(null);
+      setDownloadingPdfBatchId(null);
+    }
+  }
+
+  async function handleDownloadCsv(batch: QRBatch) {
+    try {
+      setDownloadingCsvBatchId(batch.id);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      await downloadBatchCsv(batch);
+
+      setSuccessMessage(
+        "CSV generado correctamente. Los QR se derivaron en memoria sin guardar registros individuales."
+      );
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "No se pudo generar el CSV."
+      );
+    } finally {
+      setDownloadingCsvBatchId(null);
     }
   }
 
@@ -311,11 +353,13 @@ export default function BatchesPage() {
           <Card>
             <CardContent className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-slate-400">PDF generables</p>
+                <p className="text-sm text-slate-400">Exportables</p>
 
                 <h2 className="mt-2 text-3xl font-bold text-white">
-                  {readyPdfs}
+                  {exportableBatches}
                 </h2>
+
+                <p className="mt-1 text-sm text-slate-500">PDF / CSV</p>
               </div>
 
               <div className="rounded-2xl bg-cyan-400/10 p-3 text-cyan-300">
@@ -339,13 +383,10 @@ export default function BatchesPage() {
             <CardContent>
               {products.length === 0 ? (
                 <div className="rounded-xl border border-amber-400/20 bg-amber-400/10 p-4 text-sm text-amber-200">
-                  Primero debes crear un producto antes de generar lotes QR.
+                  Primero debes crear un producto en la sección Productos.
                 </div>
               ) : (
-                <form
-                  onSubmit={handleCreateBatch}
-                  className="grid gap-5 md:grid-cols-2"
-                >
+                <form onSubmit={handleCreateBatch} className="grid gap-4 lg:grid-cols-4">
                   <div>
                     <label className="mb-2 block text-sm font-medium text-slate-300">
                       Producto
@@ -373,19 +414,32 @@ export default function BatchesPage() {
                   />
 
                   <Input
-                    label="Cantidad de QR"
+                    label="Cantidad"
                     type="number"
                     min={1}
+                    max={5000}
                     value={quantity}
-                    onChange={(event) =>
-                      setQuantity(Number(event.target.value))
-                    }
+                    onChange={(event) => setQuantity(Number(event.target.value))}
                     required
                   />
 
                   <div className="flex items-end">
-                    <Button type="submit" disabled={isCreating}>
-                      {isCreating ? "Creando lote..." : "Crear lote"}
+                    <Button
+                      type="submit"
+                      className="w-full"
+                      disabled={isCreating}
+                    >
+                      {isCreating ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Creando...
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="mr-2 h-4 w-4" />
+                          Crear lote
+                        </>
+                      )}
                     </Button>
                   </div>
                 </form>
@@ -395,24 +449,24 @@ export default function BatchesPage() {
         )}
 
         <Card>
-          <CardHeader className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
-            <div>
-              <CardTitle>Listado de lotes</CardTitle>
+          <CardHeader>
+            <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
+              <div>
+                <CardTitle>Listado de lotes</CardTitle>
 
-              <CardDescription>
-                Lotes guardados en la tabla real <strong>qr_batches</strong>.
-              </CardDescription>
-            </div>
+                <CardDescription>
+                  Genera el hash del lote y exporta en PDF o CSV sin llenar la tabla qr_codes.
+                </CardDescription>
+              </div>
 
-            <div className="w-full lg:w-80">
-              <div className="relative">
+              <div className="relative w-full lg:max-w-xs">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
 
-                <Input
-                  placeholder="Buscar lote..."
-                  className="pl-10"
+                <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Buscar lote, producto o SKU..."
+                  className="h-11 w-full rounded-xl border border-slate-800 bg-slate-950 pl-10 pr-4 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20"
                 />
               </div>
             </div>
@@ -420,137 +474,174 @@ export default function BatchesPage() {
 
           <CardContent>
             {isLoading ? (
-              <div className="rounded-xl border border-slate-800 bg-slate-950 p-8 text-center text-slate-400">
+              <div className="flex items-center justify-center rounded-xl border border-slate-800 bg-slate-950 p-10 text-slate-400">
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                 Cargando lotes...
               </div>
             ) : filteredBatches.length === 0 ? (
-              <div className="rounded-xl border border-slate-800 bg-slate-950 p-8 text-center">
-                <p className="font-medium text-white">No hay lotes todavía</p>
+              <div className="rounded-xl border border-slate-800 bg-slate-950 p-10 text-center">
+                <QrCode className="mx-auto h-10 w-10 text-slate-600" />
+
+                <h3 className="mt-4 text-lg font-semibold text-white">
+                  No hay lotes para mostrar
+                </h3>
 
                 <p className="mt-2 text-sm text-slate-400">
-                  Crea tu primer lote para luego generar QR y PDF.
+                  Crea tu primer lote QR desde el botón Nuevo lote.
                 </p>
               </div>
             ) : (
               <div className="overflow-hidden rounded-xl border border-slate-800">
-                <table className="w-full min-w-[1000px] text-left text-sm">
-                  <thead className="bg-slate-950 text-slate-400">
-                    <tr>
-                      <th className="px-4 py-3 font-medium">Lote</th>
-                      <th className="px-4 py-3 font-medium">Producto</th>
-                      <th className="px-4 py-3 font-medium">Cantidad</th>
-                      <th className="px-4 py-3 font-medium">Generados</th>
-                      <th className="px-4 py-3 font-medium">Estado</th>
-                      <th className="px-4 py-3 font-medium">PDF</th>
-                      <th className="px-4 py-3 font-medium">Fecha</th>
-                      <th className="px-4 py-3 text-right font-medium">
-                        Acciones
-                      </th>
-                    </tr>
-                  </thead>
-
-                  <tbody className="divide-y divide-slate-800">
-                    {filteredBatches.map((batch) => (
-                      <tr
-                        key={batch.id}
-                        className="text-slate-300 transition hover:bg-slate-950/60"
-                      >
-                        <td className="px-4 py-4">
-                          <p className="font-medium text-white">
-                            {batch.batch_code}
-                          </p>
-
-                          <p className="mt-1 text-xs text-slate-500">
-                            {batch.name}
-                          </p>
-                        </td>
-
-                        <td className="px-4 py-4">
-                          <p className="font-medium text-white">
-                            {batch.product?.name ?? "Sin producto"}
-                          </p>
-
-                          <p className="mt-1 text-xs text-slate-500">
-                            {batch.product?.sku ?? "Sin SKU"}
-                          </p>
-                        </td>
-
-                        <td className="px-4 py-4">
-                          {batch.quantity.toLocaleString("es-CO")}
-                        </td>
-
-                        <td className="px-4 py-4">
-                          {batch.generated_count.toLocaleString("es-CO")}
-                        </td>
-
-                        <td className="px-4 py-4">
-                          <Badge variant={getStatusVariant(batch.status)}>
-                            {getStatusLabel(batch.status)}
-                          </Badge>
-                        </td>
-
-                        <td className="px-4 py-4">
-                          {canDownloadBatchPdf(batch) ? (
-                            <Badge variant="info">Generable</Badge>
-                          ) : (
-                            <Badge variant="default">Pendiente</Badge>
-                          )}
-                        </td>
-
-                        <td className="px-4 py-4">
-                          {new Date(batch.created_at).toLocaleDateString(
-                            "es-CO"
-                          )}
-                        </td>
-
-                        <td className="px-4 py-4">
-                          <div className="flex justify-end gap-2">
-                            {batch.status === "draft" ? (
-                              <button
-                                type="button"
-                                onClick={() => handleGenerateBatch(batch.id)}
-                                disabled={generatingBatchId === batch.id}
-                                title="Generar lote"
-                                className="rounded-lg p-2 text-cyan-300 transition hover:bg-cyan-400/10 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                {generatingBatchId === batch.id ? (
-                                  <Loader2 className="h-5 w-5 animate-spin" />
-                                ) : (
-                                  <PlayCircle className="h-5 w-5" />
-                                )}
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                title="Ver lote"
-                                className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white"
-                              >
-                                <Eye className="h-5 w-5" />
-                              </button>
-                            )}
-
-                            <button
-                              type="button"
-                              onClick={() => handleDownloadPdf(batch)}
-                              disabled={
-                                !canDownloadBatchPdf(batch) ||
-                                downloadingBatchId === batch.id
-                              }
-                              title="Descargar PDF"
-                              className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              {downloadingBatchId === batch.id ? (
-                                <Loader2 className="h-5 w-5 animate-spin" />
-                              ) : (
-                                <Download className="h-5 w-5" />
-                              )}
-                            </button>
-                          </div>
-                        </td>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[980px] border-collapse">
+                    <thead className="bg-slate-950">
+                      <tr className="border-b border-slate-800 text-left text-xs uppercase tracking-wide text-slate-500">
+                        <th className="px-4 py-4 font-semibold">Lote</th>
+                        <th className="px-4 py-4 font-semibold">Producto</th>
+                        <th className="px-4 py-4 font-semibold">Cantidad</th>
+                        <th className="px-4 py-4 font-semibold">Generados</th>
+                        <th className="px-4 py-4 font-semibold">Estado</th>
+                        <th className="px-4 py-4 font-semibold">Exportación</th>
+                        <th className="px-4 py-4 font-semibold">Creado</th>
+                        <th className="px-4 py-4 text-right font-semibold">
+                          Acciones
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+
+                    <tbody className="divide-y divide-slate-800 bg-slate-900/30">
+                      {filteredBatches.map((batch) => {
+                        const isGenerating = generatingBatchId === batch.id;
+                        const isDownloadingPdf =
+                          downloadingPdfBatchId === batch.id;
+                        const isDownloadingCsv =
+                          downloadingCsvBatchId === batch.id;
+                        const canExport = canExportBatch(batch);
+
+                        return (
+                          <tr
+                            key={batch.id}
+                            className="transition hover:bg-slate-800/40"
+                          >
+                            <td className="px-4 py-4">
+                              <div>
+                                <p className="font-semibold text-white">
+                                  {batch.name}
+                                </p>
+
+                                <p className="mt-1 font-mono text-xs text-cyan-300">
+                                  {batch.batch_code}
+                                </p>
+                              </div>
+                            </td>
+
+                            <td className="px-4 py-4">
+                              <div>
+                                <p className="text-sm font-medium text-slate-200">
+                                  {batch.product?.name ?? "Sin producto"}
+                                </p>
+
+                                <p className="mt-1 text-xs text-slate-500">
+                                  SKU: {batch.product?.sku ?? "N/A"}
+                                </p>
+                              </div>
+                            </td>
+
+                            <td className="px-4 py-4 text-sm text-slate-300">
+                              {batch.quantity.toLocaleString("es-CO")}
+                            </td>
+
+                            <td className="px-4 py-4 text-sm text-slate-300">
+                              {batch.generated_count.toLocaleString("es-CO")}
+                            </td>
+
+                            <td className="px-4 py-4">
+                              <Badge variant={getStatusVariant(batch.status)}>
+                                {getStatusLabel(batch.status)}
+                              </Badge>
+                            </td>
+
+                            <td className="px-4 py-4">
+                              {canExport ? (
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-sm font-medium text-emerald-300">
+                                    PDF / CSV listo
+                                  </span>
+
+                                  <span className="text-xs text-slate-500">
+                                    Hash generado
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-sm font-medium text-amber-300">
+                                    Pendiente
+                                  </span>
+
+                                  <span className="text-xs text-slate-500">
+                                    Genera el lote primero
+                                  </span>
+                                </div>
+                              )}
+                            </td>
+
+                            <td className="px-4 py-4 text-sm text-slate-400">
+                              {formatDate(batch.created_at)}
+                            </td>
+
+                            <td className="px-4 py-4">
+                              <div className="flex items-center justify-end gap-2">
+                                {batch.status === "draft" && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleGenerateBatch(batch.id)}
+                                    disabled={isGenerating}
+                                    title="Generar lote"
+                                    className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    {isGenerating ? (
+                                      <Loader2 className="h-5 w-5 animate-spin" />
+                                    ) : (
+                                      <PlayCircle className="h-5 w-5" />
+                                    )}
+                                  </button>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadPdf(batch)}
+                                  disabled={!canExport || isDownloadingPdf}
+                                  title="Descargar PDF"
+                                  className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  {isDownloadingPdf ? (
+                                    <Loader2 className="h-5 w-5 animate-spin" />
+                                  ) : (
+                                    <Download className="h-5 w-5" />
+                                  )}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadCsv(batch)}
+                                  disabled={!canExport || isDownloadingCsv}
+                                  title="Descargar CSV"
+                                  className="rounded-lg px-2 py-1 text-xs font-semibold text-slate-400 transition hover:bg-slate-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  {isDownloadingCsv ? (
+                                    <Loader2 className="h-5 w-5 animate-spin" />
+                                  ) : (
+                                    "CSV"
+                                  )}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </CardContent>

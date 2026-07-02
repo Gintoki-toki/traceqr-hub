@@ -1,8 +1,13 @@
-import { useMemo, useState } from "react";
+import type { FormEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  CheckCircle2,
+  Download,
   FileText,
   Layers,
+  Loader2,
   Package,
+  Printer,
   QrCode,
   ShieldCheck,
   Sparkles,
@@ -20,33 +25,170 @@ import {
   CardTitle,
 } from "../../components/ui/card/Card";
 
-import { mockProducts } from "../../data/products";
-import { mockPDFTemplates } from "../../data/pdfTemplates";
+import { useAuth } from "../../contexts/AuthContext";
+import { useCompany } from "../../contexts/CompanyContext";
+import type { Product } from "../../types/product";
+import type { QRBatch } from "../../types/batch";
+import { getCompanyProducts } from "../../services/products/productService";
+import {
+  createBatch,
+  generateBatchHash,
+  getCompanyBatches,
+} from "../../services/batches/batchService";
+import { downloadBatchPdf } from "../../services/pdf/qrBatchPdfService";
+
+function estimatePdfPages(quantity: number) {
+  const qrPerPage = 20;
+  return Math.ceil(quantity / qrPerPage);
+}
 
 export default function GeneratePage() {
-  const [productId, setProductId] = useState(mockProducts[0]?.id ?? "");
+  const { user } = useAuth();
+  const { company } = useCompany();
+
+  const [products, setProducts] = useState<Product[]>([]);
+  const [selectedProductId, setSelectedProductId] = useState("");
+
   const [batchName, setBatchName] = useState("Lote de producción inicial");
-  const [quantity, setQuantity] = useState(500);
-  const [templateId, setTemplateId] = useState(mockPDFTemplates[0]?.id ?? "");
+  const [quantity, setQuantity] = useState(100);
 
-  const selectedProduct = useMemo(
-    () => mockProducts.find((product) => product.id === productId),
-    [productId]
-  );
+  const [generatedBatch, setGeneratedBatch] = useState<QRBatch | null>(null);
 
-  const selectedTemplate = useMemo(
-    () => mockPDFTemplates.find((template) => template.id === templateId),
-    [templateId]
-  );
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
-  const estimatedPages = selectedTemplate
-    ? Math.ceil(quantity / selectedTemplate.codesPerPage)
-    : 0;
+  const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
 
-  function handleGenerate() {
-    alert(
-      "Simulación: aquí luego conectaremos la generación real con HMAC-SHA256, SHA-512 y PDF."
+  const selectedProduct = useMemo(() => {
+    return (
+      products.find((product) => product.id === selectedProductId) ?? null
     );
+  }, [products, selectedProductId]);
+
+  const pages = estimatePdfPages(quantity);
+
+  async function loadProducts() {
+    if (!company?.id) return;
+
+    try {
+      setIsLoadingProducts(true);
+      setErrorMessage("");
+
+      const data = await getCompanyProducts(company.id);
+
+      setProducts(data);
+
+      if (data.length > 0) {
+        setSelectedProductId(data[0].id);
+      }
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudieron cargar los productos."
+      );
+    } finally {
+      setIsLoadingProducts(false);
+    }
+  }
+
+  useEffect(() => {
+    loadProducts();
+  }, [company?.id]);
+
+  async function handleGenerateBatch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!company?.id || !user?.id) {
+      setErrorMessage("No se encontró la empresa o el usuario actual.");
+      return;
+    }
+
+    if (!selectedProductId) {
+      setErrorMessage("Selecciona un producto.");
+      return;
+    }
+
+    if (!batchName.trim()) {
+      setErrorMessage("Escribe un nombre para el lote.");
+      return;
+    }
+
+    if (quantity <= 0) {
+      setErrorMessage("La cantidad debe ser mayor a 0.");
+      return;
+    }
+
+    if (quantity > 5000) {
+      setErrorMessage("Por ahora el máximo recomendado es 5000 QR por lote.");
+      return;
+    }
+
+    try {
+      setIsGenerating(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+      setGeneratedBatch(null);
+
+      const newBatch = await createBatch({
+        companyId: company.id,
+        userId: user.id,
+        productId: selectedProductId,
+        name: batchName,
+        quantity,
+      });
+
+      await generateBatchHash(newBatch.id);
+
+      const updatedBatches = await getCompanyBatches(company.id);
+      const updatedBatch =
+        updatedBatches.find((batch) => batch.id === newBatch.id) ?? null;
+
+      if (!updatedBatch?.batch_hash) {
+        throw new Error("El lote fue creado, pero no se encontró el hash.");
+      }
+
+      setGeneratedBatch(updatedBatch);
+
+      setSuccessMessage(
+        "Lote generado correctamente. Ya puedes descargar el PDF."
+      );
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo generar el lote QR."
+      );
+    } finally {
+      setIsGenerating(false);
+    }
+  }
+
+  async function handleDownloadPdf() {
+    if (!generatedBatch) {
+      setErrorMessage("Primero debes generar un lote.");
+      return;
+    }
+
+    try {
+      setIsDownloading(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      await downloadBatchPdf(generatedBatch);
+
+      setSuccessMessage(
+        "PDF generado correctamente. Los QR se derivaron en memoria sin guardar registros individuales."
+      );
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "No se pudo descargar el PDF."
+      );
+    } finally {
+      setIsDownloading(false);
+    }
   }
 
   return (
@@ -59,14 +201,24 @@ export default function GeneratePage() {
             </h1>
 
             <p className="mt-2 text-slate-400">
-              Crea lotes de códigos QR seguros y exportables en PDF para impresión.
+              Crea un lote, genera su hash maestro y descarga los QR en PDF para impresión.
             </p>
           </div>
 
-          <Badge variant="info">
-            Simulación frontend
-          </Badge>
+          <Badge variant="info">HMAC-SHA256 + SHA-512</Badge>
         </section>
+
+        {errorMessage && (
+          <div className="rounded-xl border border-red-400/20 bg-red-400/10 p-4 text-sm text-red-300">
+            {errorMessage}
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4 text-sm text-emerald-300">
+            {successMessage}
+          </div>
+        )}
 
         <section className="grid gap-6 xl:grid-cols-[1fr_0.8fr]">
           <Card>
@@ -74,99 +226,126 @@ export default function GeneratePage() {
               <CardTitle>Nuevo lote QR</CardTitle>
 
               <CardDescription>
-                Define el producto, la cantidad y el formato de impresión.
+                Este flujo crea el lote real en Supabase y genera solo el hash del lote.
+                Los QR individuales se derivan en memoria al crear el PDF.
               </CardDescription>
             </CardHeader>
 
             <CardContent>
-              <div className="grid gap-5">
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-300">
-                    Producto
-                  </label>
-
-                  <select
-                    value={productId}
-                    onChange={(event) => setProductId(event.target.value)}
-                    className="h-11 w-full rounded-xl border border-slate-800 bg-slate-950 px-4 text-sm text-white outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20"
-                  >
-                    {mockProducts.map((product) => (
-                      <option key={product.id} value={product.id}>
-                        {product.name} — {product.sku}
-                      </option>
-                    ))}
-                  </select>
+              {isLoadingProducts ? (
+                <div className="rounded-xl border border-slate-800 bg-slate-950 p-8 text-center text-slate-400">
+                  Cargando productos...
                 </div>
-
-                <Input
-                  label="Nombre del lote"
-                  value={batchName}
-                  onChange={(event) => setBatchName(event.target.value)}
-                  placeholder="Ej: Lote Café Premium Julio"
-                />
-
-                <Input
-                  label="Cantidad de códigos QR"
-                  type="number"
-                  min={1}
-                  value={quantity}
-                  onChange={(event) =>
-                    setQuantity(Number(event.target.value))
-                  }
-                  placeholder="Ej: 1000"
-                />
-
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-300">
-                    Plantilla PDF
-                  </label>
-
-                  <select
-                    value={templateId}
-                    onChange={(event) => setTemplateId(event.target.value)}
-                    className="h-11 w-full rounded-xl border border-slate-800 bg-slate-950 px-4 text-sm text-white outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20"
-                  >
-                    {mockPDFTemplates.map((template) => (
-                      <option key={template.id} value={template.id}>
-                        {template.name} — {template.codesPerPage} QR por página
-                      </option>
-                    ))}
-                  </select>
+              ) : products.length === 0 ? (
+                <div className="rounded-xl border border-amber-400/20 bg-amber-400/10 p-4 text-sm text-amber-200">
+                  Primero debes crear un producto en la sección Productos.
                 </div>
+              ) : (
+                <form onSubmit={handleGenerateBatch} className="space-y-5">
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-slate-300">
+                      Producto
+                    </label>
 
-                <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-                  <div className="flex items-start gap-3">
-                    <ShieldCheck className="mt-1 h-5 w-5 text-cyan-300" />
+                    <select
+                      value={selectedProductId}
+                      onChange={(event) =>
+                        setSelectedProductId(event.target.value)
+                      }
+                      className="h-11 w-full rounded-xl border border-slate-800 bg-slate-950 px-4 text-sm text-white outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20"
+                    >
+                      {products.map((product) => (
+                        <option key={product.id} value={product.id}>
+                          {product.name} — {product.sku}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-                    <div>
-                      <p className="font-medium text-white">
-                        Generación criptográfica segura
-                      </p>
+                  <Input
+                    label="Nombre del lote"
+                    placeholder="Ej: Lote Croquetas Julio"
+                    value={batchName}
+                    onChange={(event) => setBatchName(event.target.value)}
+                    required
+                  />
 
-                      <p className="mt-1 text-sm text-slate-400">
-                        El backend generará un hash maestro del lote usando
-                        HMAC-SHA256 y cada QR individual derivará de ese lote
-                        mediante SHA-512.
-                      </p>
+                  <Input
+                    label="Cantidad de códigos QR"
+                    type="number"
+                    min={1}
+                    max={5000}
+                    value={quantity}
+                    onChange={(event) =>
+                      setQuantity(Number(event.target.value))
+                    }
+                    required
+                  />
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium text-slate-300">
+                      Plantilla PDF
+                    </label>
+
+                    <select
+                      disabled
+                      className="h-11 w-full rounded-xl border border-slate-800 bg-slate-950 px-4 text-sm text-slate-400 outline-none"
+                    >
+                      <option>A4 estándar - 20 QR por página</option>
+                    </select>
+
+                    <p className="mt-2 text-xs text-slate-500">
+                      La plantilla avanzada para máquinas de impresión la podemos agregar después.
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl border border-cyan-400/20 bg-cyan-400/10 p-4">
+                    <div className="flex items-start gap-3">
+                      <ShieldCheck className="mt-0.5 h-5 w-5 text-cyan-300" />
+
+                      <div>
+                        <p className="font-medium text-cyan-100">
+                          Generación segura sin sobrecargar la base
+                        </p>
+
+                        <p className="mt-1 text-sm text-cyan-200/80">
+                          Se guardará solo el hash maestro del lote. Los QR se
+                          calculan al momento de crear el PDF.
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <Button onClick={handleGenerate} size="lg">
-                  <Sparkles className="mr-2 h-5 w-5" />
-                  Simular generación del lote
-                </Button>
-              </div>
+                  <Button
+                    type="submit"
+                    size="lg"
+                    className="w-full"
+                    disabled={isGenerating}
+                  >
+                    {isGenerating ? (
+                      <>
+                        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                        Creando y generando lote...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="mr-2 h-5 w-5" />
+                        Crear lote y generar hash
+                      </>
+                    )}
+                  </Button>
+                </form>
+              )}
             </CardContent>
           </Card>
 
-          <div className="flex flex-col gap-6">
+          <div className="space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle>Vista previa</CardTitle>
 
                 <CardDescription>
-                  Resumen del lote antes de generar los QR.
+                  Resumen del lote antes de descargar el PDF.
                 </CardDescription>
               </CardHeader>
 
@@ -177,12 +356,14 @@ export default function GeneratePage() {
                       <Package className="h-5 w-5 text-cyan-300" />
 
                       <div>
-                        <p className="text-sm text-slate-400">
-                          Producto
+                        <p className="text-sm text-slate-400">Producto</p>
+
+                        <p className="font-semibold text-white">
+                          {selectedProduct?.name ?? "Sin producto seleccionado"}
                         </p>
 
-                        <p className="font-medium text-white">
-                          {selectedProduct?.name ?? "Sin producto"}
+                        <p className="text-xs text-slate-500">
+                          {selectedProduct?.sku ?? "Sin SKU"}
                         </p>
                       </div>
                     </div>
@@ -193,18 +374,16 @@ export default function GeneratePage() {
                       <Layers className="h-5 w-5 text-cyan-300" />
 
                       <div>
-                        <p className="text-sm text-slate-400">
-                          Lote
-                        </p>
+                        <p className="text-sm text-slate-400">Lote</p>
 
-                        <p className="font-medium text-white">
+                        <p className="font-semibold text-white">
                           {batchName || "Sin nombre"}
                         </p>
                       </div>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-4 md:grid-cols-2">
                     <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
                       <QrCode className="h-5 w-5 text-cyan-300" />
 
@@ -212,7 +391,7 @@ export default function GeneratePage() {
                         QR a generar
                       </p>
 
-                      <p className="mt-1 text-2xl font-bold text-white">
+                      <p className="mt-1 text-3xl font-bold text-white">
                         {quantity.toLocaleString("es-CO")}
                       </p>
                     </div>
@@ -221,11 +400,11 @@ export default function GeneratePage() {
                       <FileText className="h-5 w-5 text-cyan-300" />
 
                       <p className="mt-3 text-sm text-slate-400">
-                        Páginas PDF
+                        Páginas PDF estimadas
                       </p>
 
-                      <p className="mt-1 text-2xl font-bold text-white">
-                        {estimatedPages}
+                      <p className="mt-1 text-3xl font-bold text-white">
+                        {pages}
                       </p>
                     </div>
                   </div>
@@ -235,60 +414,76 @@ export default function GeneratePage() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Plantilla seleccionada</CardTitle>
+                <CardTitle>Resultado</CardTitle>
+
+                <CardDescription>
+                  Cuando el lote esté generado podrás descargar el PDF.
+                </CardDescription>
               </CardHeader>
 
               <CardContent>
-                {selectedTemplate && (
+                {!generatedBatch ? (
+                  <div className="rounded-xl border border-slate-800 bg-slate-950 p-6 text-center text-sm text-slate-400">
+                    Aún no has generado un lote en esta pantalla.
+                  </div>
+                ) : (
                   <div className="space-y-4">
-                    <div>
-                      <p className="font-medium text-white">
-                        {selectedTemplate.name}
-                      </p>
+                    <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4">
+                      <div className="flex items-start gap-3">
+                        <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-300" />
 
-                      <p className="mt-1 text-sm text-slate-400">
-                        {selectedTemplate.description}
-                      </p>
-                    </div>
+                        <div>
+                          <p className="font-medium text-emerald-100">
+                            Lote generado correctamente
+                          </p>
 
-                    <div className="grid grid-cols-3 gap-3">
-                      <div className="rounded-xl bg-slate-950 p-3">
-                        <p className="text-xs text-slate-500">
-                          Página
-                        </p>
-
-                        <p className="mt-1 font-medium text-white">
-                          {selectedTemplate.pageSize}
-                        </p>
-                      </div>
-
-                      <div className="rounded-xl bg-slate-950 p-3">
-                        <p className="text-xs text-slate-500">
-                          Columnas
-                        </p>
-
-                        <p className="mt-1 font-medium text-white">
-                          {selectedTemplate.columns}
-                        </p>
-                      </div>
-
-                      <div className="rounded-xl bg-slate-950 p-3">
-                        <p className="text-xs text-slate-500">
-                          Filas
-                        </p>
-
-                        <p className="mt-1 font-medium text-white">
-                          {selectedTemplate.rows}
-                        </p>
+                          <p className="mt-1 text-sm text-emerald-200/80">
+                            {generatedBatch.batch_code} —{" "}
+                            {generatedBatch.generated_count.toLocaleString(
+                              "es-CO"
+                            )}{" "}
+                            QR derivados desde batch_hash.
+                          </p>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-cyan-400/20 bg-cyan-400/10 p-4">
-                      <p className="text-sm text-cyan-200">
-                        Este lote generará aproximadamente{" "}
-                        <strong>{estimatedPages}</strong> página(s) PDF listas
-                        para descargar o imprimir.
+                    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                      <p className="text-sm text-slate-400">Hash del lote</p>
+
+                      <p className="mt-2 break-all font-mono text-xs text-cyan-200">
+                        {generatedBatch.batch_hash}
                       </p>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <Button
+                        type="button"
+                        onClick={handleDownloadPdf}
+                        disabled={isDownloading}
+                      >
+                        {isDownloading ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Generando PDF...
+                          </>
+                        ) : (
+                          <>
+                            <Download className="mr-2 h-4 w-4" />
+                            Descargar PDF
+                          </>
+                        )}
+                      </Button>
+
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={!generatedBatch}
+                        onClick={handleDownloadPdf}
+                      >
+                        <Printer className="mr-2 h-4 w-4" />
+                        Preparar impresión
+                      </Button>
                     </div>
                   </div>
                 )}
