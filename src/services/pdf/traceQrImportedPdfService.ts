@@ -74,7 +74,11 @@ async function createImportedTraceQrPdf(importedBatch: TraceQrCsvImportResult) {
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8);
     pdf.text(`Lote: ${importedBatch.batchName || "Sin lote"}`, margin, 14);
-    pdf.text(`Producto: ${importedBatch.productName || "Sin producto"}`, margin, 18);
+    pdf.text(
+      `Producto: ${importedBatch.productName || "Sin producto"}`,
+      margin,
+      18
+    );
     pdf.text(`Total QR: ${importedBatch.total}`, margin, 22);
 
     pdf.text(`Página: ${pageNumber}`, pageWidth - margin, 10, {
@@ -149,6 +153,15 @@ async function createImportedTraceQrPdf(importedBatch: TraceQrCsvImportResult) {
   return pdf;
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 export async function downloadImportedTraceQrPdf(
   importedBatch: TraceQrCsvImportResult
 ) {
@@ -173,6 +186,8 @@ export async function downloadImportedTraceQrPdf(
 export async function printImportedTraceQrPdf(
   importedBatch: TraceQrCsvImportResult
 ) {
+  validateImportedBatch(importedBatch);
+
   const printWindow = window.open("", "_blank");
 
   if (!printWindow) {
@@ -186,34 +201,165 @@ export async function printImportedTraceQrPdf(
     <html>
       <head>
         <meta charset="utf-8" />
-        <title>Preparando PDF...</title>
+        <title>Impresión TraceQrHub</title>
+        <style>
+          * {
+            box-sizing: border-box;
+          }
+
+          body {
+            margin: 0;
+            padding: 12mm;
+            font-family: Arial, sans-serif;
+            color: #111827;
+            background: white;
+          }
+
+          .header {
+            margin-bottom: 8mm;
+            border-bottom: 1px solid #d1d5db;
+            padding-bottom: 4mm;
+          }
+
+          .header h1 {
+            margin: 0 0 2mm;
+            font-size: 16px;
+          }
+
+          .header p {
+            margin: 1mm 0;
+            font-size: 10px;
+          }
+
+          .grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 5mm 4mm;
+          }
+
+          .qr-card {
+            break-inside: avoid;
+            page-break-inside: avoid;
+            text-align: center;
+            border: 1px dashed #d1d5db;
+            padding: 3mm 2mm;
+            min-height: 45mm;
+          }
+
+          .qr-card img {
+            width: 30mm;
+            height: 30mm;
+            object-fit: contain;
+          }
+
+          .short-code {
+            margin-top: 2mm;
+            font-size: 9px;
+            font-weight: bold;
+          }
+
+          .product {
+            margin-top: 1mm;
+            font-size: 7px;
+          }
+
+          .brand {
+            margin-top: 1mm;
+            font-size: 7px;
+            color: #4b5563;
+          }
+
+          .loading {
+            font-size: 14px;
+            padding: 32px;
+          }
+
+          @page {
+            size: A4;
+            margin: 8mm;
+          }
+
+          @media print {
+            body {
+              padding: 0;
+            }
+
+            .no-print {
+              display: none;
+            }
+
+            .header {
+              break-after: avoid;
+            }
+          }
+        </style>
       </head>
-      <body style="font-family: Arial, sans-serif; padding: 32px;">
-        <h2>Generando PDF de TraceQrHub...</h2>
-        <p>Espera unos segundos. No cierres esta ventana.</p>
+      <body>
+        <div class="loading">
+          Generando vista de impresión de TraceQrHub... Espera unos segundos.
+        </div>
       </body>
     </html>
   `);
 
   printWindow.document.close();
 
-  const pdf = await createImportedTraceQrPdf(importedBatch);
-  const pdfBlob = pdf.output("blob");
-  const pdfUrl = URL.createObjectURL(pdfBlob);
+  const qrItems: string[] = [];
 
-  printWindow.location.href = pdfUrl;
+  for (let i = 0; i < importedBatch.rows.length; i++) {
+    const row = importedBatch.rows[i];
 
-  window.setTimeout(() => {
-    try {
-      printWindow.focus();
-      printWindow.print();
-    } catch {
-      // Si el navegador no permite imprimir automáticamente,
-      // el PDF queda abierto para imprimir manualmente.
+    const qrImage = await QRCode.toDataURL(row.qr_url, {
+      errorCorrectionLevel: "M",
+      margin: 1,
+      width: 180,
+    });
+
+    qrItems.push(`
+      <div class="qr-card">
+        <img src="${qrImage}" alt="${escapeHtml(row.short_code)}" />
+        <div class="short-code">${escapeHtml(row.short_code)}</div>
+        <div class="product">${escapeHtml(
+          importedBatch.productName || importedBatch.batchName || "TraceQR"
+        )}</div>
+        ${
+          importedBatch.productBrand
+            ? `<div class="brand">${escapeHtml(importedBatch.productBrand)}</div>`
+            : ""
+        }
+      </div>
+    `);
+
+    if (i % 50 === 0) {
+      await pauseBrowser();
     }
-  }, 1800);
+  }
+
+  printWindow.document.body.innerHTML = `
+    <div class="header">
+      <h1>TraceQrHub - Impresión desde CSV TraceQR</h1>
+      <p><strong>Lote:</strong> ${escapeHtml(
+        importedBatch.batchName || "Sin lote"
+      )}</p>
+      <p><strong>Producto:</strong> ${escapeHtml(
+        importedBatch.productName || "Sin producto"
+      )}</p>
+      <p><strong>Marca:</strong> ${escapeHtml(
+        importedBatch.productBrand || "Sin marca"
+      )}</p>
+      <p><strong>Total QR:</strong> ${importedBatch.total.toLocaleString(
+        "es-CO"
+      )}</p>
+    </div>
+
+    <div class="grid">
+      ${qrItems.join("")}
+    </div>
+  `;
+
+  printWindow.focus();
 
   window.setTimeout(() => {
-    URL.revokeObjectURL(pdfUrl);
-  }, 60000);
+    printWindow.print();
+  }, 800);
 }
