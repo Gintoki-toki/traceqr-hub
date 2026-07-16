@@ -24,7 +24,7 @@ function validateImportedBatch(importedBatch: TraceQrCsvImportResult) {
     throw new Error("El CSV no tiene company_id.");
   }
 
-  if (importedBatch.strategy !== "batch_hash") {
+  if ((importedBatch.strategy || "batch_hash") !== "batch_hash") {
     throw new Error("El CSV no usa la estrategia batch_hash.");
   }
 }
@@ -34,6 +34,14 @@ function getImportedPdfFileName(importedBatch: TraceQrCsvImportResult) {
   const productName = sanitizeFileName(importedBatch.productName || "producto");
 
   return `traceqrhub_${batchName}_${productName}.pdf`;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function pauseBrowser() {
+  await sleep(0);
 }
 
 async function createImportedTraceQrPdf(importedBatch: TraceQrCsvImportResult) {
@@ -51,7 +59,7 @@ async function createImportedTraceQrPdf(importedBatch: TraceQrCsvImportResult) {
 
   const columns = 4;
   const rows = 5;
-  const perPage = columns * rows;
+  const qrPerPage = columns * rows;
 
   const usableWidth = pageWidth - margin * 2;
   const cellWidth = usableWidth / columns;
@@ -65,7 +73,7 @@ async function createImportedTraceQrPdf(importedBatch: TraceQrCsvImportResult) {
 
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8);
-    pdf.text(`Lote: ${importedBatch.batchName}`, margin, 14);
+    pdf.text(`Lote: ${importedBatch.batchName || "Sin lote"}`, margin, 14);
     pdf.text(`Producto: ${importedBatch.productName || "Sin producto"}`, margin, 18);
     pdf.text(`Total QR: ${importedBatch.total}`, margin, 22);
 
@@ -78,12 +86,11 @@ async function createImportedTraceQrPdf(importedBatch: TraceQrCsvImportResult) {
 
   for (let i = 0; i < importedBatch.rows.length; i++) {
     const qrRow = importedBatch.rows[i];
-
-    const positionInPage = i % perPage;
+    const positionInPage = i % qrPerPage;
 
     if (i > 0 && positionInPage === 0) {
       pdf.addPage();
-      drawHeader(Math.floor(i / perPage) + 1);
+      drawHeader(Math.floor(i / qrPerPage) + 1);
     }
 
     const column = positionInPage % columns;
@@ -133,6 +140,10 @@ async function createImportedTraceQrPdf(importedBatch: TraceQrCsvImportResult) {
         }
       );
     }
+
+    if (i % 50 === 0) {
+      await pauseBrowser();
+    }
   }
 
   return pdf;
@@ -143,24 +154,54 @@ export async function downloadImportedTraceQrPdf(
 ) {
   const pdf = await createImportedTraceQrPdf(importedBatch);
 
-  pdf.save(getImportedPdfFileName(importedBatch));
+  const pdfBlob = pdf.output("blob");
+  const pdfUrl = URL.createObjectURL(pdfBlob);
+
+  const link = document.createElement("a");
+  link.href = pdfUrl;
+  link.download = getImportedPdfFileName(importedBatch);
+
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  window.setTimeout(() => {
+    URL.revokeObjectURL(pdfUrl);
+  }, 60000);
 }
 
 export async function printImportedTraceQrPdf(
   importedBatch: TraceQrCsvImportResult
 ) {
-  const pdf = await createImportedTraceQrPdf(importedBatch);
-  const pdfBlob = pdf.output("blob");
-  const pdfUrl = URL.createObjectURL(pdfBlob);
-
-  const printWindow = window.open(pdfUrl, "_blank");
+  const printWindow = window.open("", "_blank");
 
   if (!printWindow) {
-    URL.revokeObjectURL(pdfUrl);
     throw new Error(
       "El navegador bloqueó la ventana de impresión. Permite ventanas emergentes para este sitio."
     );
   }
+
+  printWindow.document.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Preparando PDF...</title>
+      </head>
+      <body style="font-family: Arial, sans-serif; padding: 32px;">
+        <h2>Generando PDF de TraceQrHub...</h2>
+        <p>Espera unos segundos. No cierres esta ventana.</p>
+      </body>
+    </html>
+  `);
+
+  printWindow.document.close();
+
+  const pdf = await createImportedTraceQrPdf(importedBatch);
+  const pdfBlob = pdf.output("blob");
+  const pdfUrl = URL.createObjectURL(pdfBlob);
+
+  printWindow.location.href = pdfUrl;
 
   window.setTimeout(() => {
     try {
@@ -168,9 +209,9 @@ export async function printImportedTraceQrPdf(
       printWindow.print();
     } catch {
       // Si el navegador no permite imprimir automáticamente,
-      // el PDF queda abierto para que el usuario lo imprima manualmente.
+      // el PDF queda abierto para imprimir manualmente.
     }
-  }, 1200);
+  }, 1800);
 
   window.setTimeout(() => {
     URL.revokeObjectURL(pdfUrl);
