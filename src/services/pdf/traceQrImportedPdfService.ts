@@ -44,6 +44,34 @@ async function pauseBrowser() {
   await sleep(0);
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+async function waitForIframeImages(iframeDocument: Document) {
+  const images = Array.from(iframeDocument.images);
+
+  await Promise.all(
+    images.map(
+      (image) =>
+        new Promise<void>((resolve) => {
+          if (image.complete) {
+            resolve();
+            return;
+          }
+
+          image.onload = () => resolve();
+          image.onerror = () => resolve();
+        })
+    )
+  );
+}
+
 async function createImportedTraceQrPdf(importedBatch: TraceQrCsvImportResult) {
   validateImportedBatch(importedBatch);
 
@@ -153,15 +181,6 @@ async function createImportedTraceQrPdf(importedBatch: TraceQrCsvImportResult) {
   return pdf;
 }
 
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
 export async function downloadImportedTraceQrPdf(
   importedBatch: TraceQrCsvImportResult
 ) {
@@ -188,15 +207,35 @@ export async function printImportedTraceQrPdf(
 ) {
   validateImportedBatch(importedBatch);
 
-  const printWindow = window.open("", "_blank");
+  const oldFrame = document.getElementById("traceqrhub-print-frame");
 
-  if (!printWindow) {
-    throw new Error(
-      "El navegador bloqueó la ventana de impresión. Permite ventanas emergentes para este sitio."
-    );
+  if (oldFrame) {
+    oldFrame.remove();
   }
 
-  printWindow.document.write(`
+  const iframe = document.createElement("iframe");
+  iframe.id = "traceqrhub-print-frame";
+  iframe.style.position = "fixed";
+  iframe.style.left = "-10000px";
+  iframe.style.top = "0";
+  iframe.style.width = "210mm";
+  iframe.style.height = "297mm";
+  iframe.style.border = "0";
+  iframe.style.opacity = "0";
+  iframe.style.pointerEvents = "none";
+
+  document.body.appendChild(iframe);
+
+  const iframeWindow = iframe.contentWindow;
+  const iframeDocument = iframe.contentDocument;
+
+  if (!iframeWindow || !iframeDocument) {
+    iframe.remove();
+    throw new Error("No se pudo crear la vista de impresión.");
+  }
+
+  iframeDocument.open();
+  iframeDocument.write(`
     <!doctype html>
     <html>
       <head>
@@ -209,14 +248,14 @@ export async function printImportedTraceQrPdf(
 
           body {
             margin: 0;
-            padding: 12mm;
+            padding: 8mm;
             font-family: Arial, sans-serif;
             color: #111827;
             background: white;
           }
 
           .header {
-            margin-bottom: 8mm;
+            margin-bottom: 6mm;
             border-bottom: 1px solid #d1d5db;
             padding-bottom: 4mm;
           }
@@ -269,11 +308,6 @@ export async function printImportedTraceQrPdf(
             color: #4b5563;
           }
 
-          .loading {
-            font-size: 14px;
-            padding: 32px;
-          }
-
           @page {
             size: A4;
             margin: 8mm;
@@ -284,27 +318,46 @@ export async function printImportedTraceQrPdf(
               padding: 0;
             }
 
-            .no-print {
-              display: none;
-            }
-
             .header {
               break-after: avoid;
+            }
+
+            .qr-card {
+              break-inside: avoid;
+              page-break-inside: avoid;
             }
           }
         </style>
       </head>
       <body>
-        <div class="loading">
-          Generando vista de impresión de TraceQrHub... Espera unos segundos.
+        <div class="header">
+          <h1>TraceQrHub - Impresión desde CSV TraceQR</h1>
+          <p><strong>Lote:</strong> ${escapeHtml(
+            importedBatch.batchName || "Sin lote"
+          )}</p>
+          <p><strong>Producto:</strong> ${escapeHtml(
+            importedBatch.productName || "Sin producto"
+          )}</p>
+          <p><strong>Marca:</strong> ${escapeHtml(
+            importedBatch.productBrand || "Sin marca"
+          )}</p>
+          <p><strong>Total QR:</strong> ${importedBatch.total.toLocaleString(
+            "es-CO"
+          )}</p>
         </div>
+
+        <div id="qr-grid" class="grid"></div>
       </body>
     </html>
   `);
+  iframeDocument.close();
 
-  printWindow.document.close();
+  const grid = iframeDocument.getElementById("qr-grid");
 
-  const qrItems: string[] = [];
+  if (!grid) {
+    iframe.remove();
+    throw new Error("No se pudo preparar la grilla de impresión.");
+  }
 
   for (let i = 0; i < importedBatch.rows.length; i++) {
     const row = importedBatch.rows[i];
@@ -315,51 +368,36 @@ export async function printImportedTraceQrPdf(
       width: 180,
     });
 
-    qrItems.push(`
-      <div class="qr-card">
-        <img src="${qrImage}" alt="${escapeHtml(row.short_code)}" />
-        <div class="short-code">${escapeHtml(row.short_code)}</div>
-        <div class="product">${escapeHtml(
-          importedBatch.productName || importedBatch.batchName || "TraceQR"
-        )}</div>
-        ${
-          importedBatch.productBrand
-            ? `<div class="brand">${escapeHtml(importedBatch.productBrand)}</div>`
-            : ""
-        }
-      </div>
-    `);
+    const card = iframeDocument.createElement("div");
+    card.className = "qr-card";
+
+    card.innerHTML = `
+      <img src="${qrImage}" alt="${escapeHtml(row.short_code)}" />
+      <div class="short-code">${escapeHtml(row.short_code)}</div>
+      <div class="product">${escapeHtml(
+        importedBatch.productName || importedBatch.batchName || "TraceQR"
+      )}</div>
+      ${
+        importedBatch.productBrand
+          ? `<div class="brand">${escapeHtml(importedBatch.productBrand)}</div>`
+          : ""
+      }
+    `;
+
+    grid.appendChild(card);
 
     if (i % 50 === 0) {
       await pauseBrowser();
     }
   }
 
-  printWindow.document.body.innerHTML = `
-    <div class="header">
-      <h1>TraceQrHub - Impresión desde CSV TraceQR</h1>
-      <p><strong>Lote:</strong> ${escapeHtml(
-        importedBatch.batchName || "Sin lote"
-      )}</p>
-      <p><strong>Producto:</strong> ${escapeHtml(
-        importedBatch.productName || "Sin producto"
-      )}</p>
-      <p><strong>Marca:</strong> ${escapeHtml(
-        importedBatch.productBrand || "Sin marca"
-      )}</p>
-      <p><strong>Total QR:</strong> ${importedBatch.total.toLocaleString(
-        "es-CO"
-      )}</p>
-    </div>
+  await waitForIframeImages(iframeDocument);
+  await sleep(800);
 
-    <div class="grid">
-      ${qrItems.join("")}
-    </div>
-  `;
-
-  printWindow.focus();
+  iframeWindow.focus();
+  iframeWindow.print();
 
   window.setTimeout(() => {
-    printWindow.print();
-  }, 800);
+    iframe.remove();
+  }, 30000);
 }
