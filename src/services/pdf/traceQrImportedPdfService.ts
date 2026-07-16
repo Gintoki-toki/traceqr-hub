@@ -29,11 +29,16 @@ function validateImportedBatch(importedBatch: TraceQrCsvImportResult) {
   }
 }
 
-function getImportedPdfFileName(importedBatch: TraceQrCsvImportResult) {
+function getImportedPdfFileName(
+  importedBatch: TraceQrCsvImportResult,
+  suffix = ""
+) {
   const batchName = sanitizeFileName(importedBatch.batchName || "lote-traceqr");
   const productName = sanitizeFileName(importedBatch.productName || "producto");
 
-  return `traceqrhub_${batchName}_${productName}.pdf`;
+  const cleanSuffix = suffix ? `_${sanitizeFileName(suffix)}` : "";
+
+  return `traceqrhub_${batchName}_${productName}${cleanSuffix}.pdf`;
 }
 
 function sleep(ms: number) {
@@ -42,34 +47,6 @@ function sleep(ms: number) {
 
 async function pauseBrowser() {
   await sleep(0);
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-async function waitForIframeImages(iframeDocument: Document) {
-  const images = Array.from(iframeDocument.images);
-
-  await Promise.all(
-    images.map(
-      (image) =>
-        new Promise<void>((resolve) => {
-          if (image.complete) {
-            resolve();
-            return;
-          }
-
-          image.onload = () => resolve();
-          image.onerror = () => resolve();
-        })
-    )
-  );
 }
 
 async function createImportedTraceQrPdf(importedBatch: TraceQrCsvImportResult) {
@@ -181,17 +158,13 @@ async function createImportedTraceQrPdf(importedBatch: TraceQrCsvImportResult) {
   return pdf;
 }
 
-export async function downloadImportedTraceQrPdf(
-  importedBatch: TraceQrCsvImportResult
-) {
-  const pdf = await createImportedTraceQrPdf(importedBatch);
-
+async function downloadPdfBlob(pdf: jsPDF, fileName: string) {
   const pdfBlob = pdf.output("blob");
   const pdfUrl = URL.createObjectURL(pdfBlob);
 
   const link = document.createElement("a");
   link.href = pdfUrl;
-  link.download = getImportedPdfFileName(importedBatch);
+  link.download = fileName;
 
   document.body.appendChild(link);
   link.click();
@@ -202,202 +175,21 @@ export async function downloadImportedTraceQrPdf(
   }, 60000);
 }
 
+export async function downloadImportedTraceQrPdf(
+  importedBatch: TraceQrCsvImportResult
+) {
+  const pdf = await createImportedTraceQrPdf(importedBatch);
+
+  await downloadPdfBlob(pdf, getImportedPdfFileName(importedBatch));
+}
+
 export async function printImportedTraceQrPdf(
   importedBatch: TraceQrCsvImportResult
 ) {
-  validateImportedBatch(importedBatch);
+  const pdf = await createImportedTraceQrPdf(importedBatch);
 
-  const oldFrame = document.getElementById("traceqrhub-print-frame");
-
-  if (oldFrame) {
-    oldFrame.remove();
-  }
-
-  const iframe = document.createElement("iframe");
-  iframe.id = "traceqrhub-print-frame";
-  iframe.style.position = "fixed";
-  iframe.style.left = "-10000px";
-  iframe.style.top = "0";
-  iframe.style.width = "210mm";
-  iframe.style.height = "297mm";
-  iframe.style.border = "0";
-  iframe.style.opacity = "0";
-  iframe.style.pointerEvents = "none";
-
-  document.body.appendChild(iframe);
-
-  const iframeWindow = iframe.contentWindow;
-  const iframeDocument = iframe.contentDocument;
-
-  if (!iframeWindow || !iframeDocument) {
-    iframe.remove();
-    throw new Error("No se pudo crear la vista de impresión.");
-  }
-
-  iframeDocument.open();
-  iframeDocument.write(`
-    <!doctype html>
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <title>Impresión TraceQrHub</title>
-        <style>
-          * {
-            box-sizing: border-box;
-          }
-
-          body {
-            margin: 0;
-            padding: 8mm;
-            font-family: Arial, sans-serif;
-            color: #111827;
-            background: white;
-          }
-
-          .header {
-            margin-bottom: 6mm;
-            border-bottom: 1px solid #d1d5db;
-            padding-bottom: 4mm;
-          }
-
-          .header h1 {
-            margin: 0 0 2mm;
-            font-size: 16px;
-          }
-
-          .header p {
-            margin: 1mm 0;
-            font-size: 10px;
-          }
-
-          .grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 5mm 4mm;
-          }
-
-          .qr-card {
-            break-inside: avoid;
-            page-break-inside: avoid;
-            text-align: center;
-            border: 1px dashed #d1d5db;
-            padding: 3mm 2mm;
-            min-height: 45mm;
-          }
-
-          .qr-card img {
-            width: 30mm;
-            height: 30mm;
-            object-fit: contain;
-          }
-
-          .short-code {
-            margin-top: 2mm;
-            font-size: 9px;
-            font-weight: bold;
-          }
-
-          .product {
-            margin-top: 1mm;
-            font-size: 7px;
-          }
-
-          .brand {
-            margin-top: 1mm;
-            font-size: 7px;
-            color: #4b5563;
-          }
-
-          @page {
-            size: A4;
-            margin: 8mm;
-          }
-
-          @media print {
-            body {
-              padding: 0;
-            }
-
-            .header {
-              break-after: avoid;
-            }
-
-            .qr-card {
-              break-inside: avoid;
-              page-break-inside: avoid;
-            }
-          }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <h1>TraceQrHub - Impresión desde CSV TraceQR</h1>
-          <p><strong>Lote:</strong> ${escapeHtml(
-            importedBatch.batchName || "Sin lote"
-          )}</p>
-          <p><strong>Producto:</strong> ${escapeHtml(
-            importedBatch.productName || "Sin producto"
-          )}</p>
-          <p><strong>Marca:</strong> ${escapeHtml(
-            importedBatch.productBrand || "Sin marca"
-          )}</p>
-          <p><strong>Total QR:</strong> ${importedBatch.total.toLocaleString(
-            "es-CO"
-          )}</p>
-        </div>
-
-        <div id="qr-grid" class="grid"></div>
-      </body>
-    </html>
-  `);
-  iframeDocument.close();
-
-  const grid = iframeDocument.getElementById("qr-grid");
-
-  if (!grid) {
-    iframe.remove();
-    throw new Error("No se pudo preparar la grilla de impresión.");
-  }
-
-  for (let i = 0; i < importedBatch.rows.length; i++) {
-    const row = importedBatch.rows[i];
-
-    const qrImage = await QRCode.toDataURL(row.qr_url, {
-      errorCorrectionLevel: "M",
-      margin: 1,
-      width: 180,
-    });
-
-    const card = iframeDocument.createElement("div");
-    card.className = "qr-card";
-
-    card.innerHTML = `
-      <img src="${qrImage}" alt="${escapeHtml(row.short_code)}" />
-      <div class="short-code">${escapeHtml(row.short_code)}</div>
-      <div class="product">${escapeHtml(
-        importedBatch.productName || importedBatch.batchName || "TraceQR"
-      )}</div>
-      ${
-        importedBatch.productBrand
-          ? `<div class="brand">${escapeHtml(importedBatch.productBrand)}</div>`
-          : ""
-      }
-    `;
-
-    grid.appendChild(card);
-
-    if (i % 50 === 0) {
-      await pauseBrowser();
-    }
-  }
-
-  await waitForIframeImages(iframeDocument);
-  await sleep(800);
-
-  iframeWindow.focus();
-  iframeWindow.print();
-
-  window.setTimeout(() => {
-    iframe.remove();
-  }, 30000);
+  await downloadPdfBlob(
+    pdf,
+    getImportedPdfFileName(importedBatch, "listo-para-imprimir")
+  );
 }
