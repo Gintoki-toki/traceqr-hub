@@ -25,7 +25,7 @@ export interface TraceQrCsvImportResult {
   rows: TraceQrCsvRow[];
 }
 
-const REQUIRED_COLUMNS = [
+const FULL_FORMAT_COLUMNS = [
   "batch_id",
   "batch_name",
   "company_id",
@@ -39,6 +39,21 @@ const REQUIRED_COLUMNS = [
   "status",
   "strategy",
 ];
+
+const LEGACY_FORMAT_COLUMNS = [
+  "short_code",
+  "qr_url",
+  "ucid_hash",
+  "product_name",
+  "product_brand",
+  "status",
+];
+
+interface QrUrlData {
+  batchId: string;
+  index: number;
+  token: string;
+}
 
 function parseCsvLine(line: string): string[] {
   const values: string[] = [];
@@ -82,17 +97,35 @@ function validateToken(token: string) {
   return /^[a-f0-9]{128}$/i.test(token);
 }
 
-function validateQrUrl(url: string) {
+function getMissingColumns(headers: string[], requiredColumns: string[]) {
+  return requiredColumns.filter((column) => !headers.includes(column));
+}
+
+function hasColumns(headers: string[], requiredColumns: string[]) {
+  return getMissingColumns(headers, requiredColumns).length === 0;
+}
+
+function extractQrUrlData(url: string): QrUrlData | null {
   try {
     const parsedUrl = new URL(url);
 
-    const batch = parsedUrl.searchParams.get("batch");
-    const index = parsedUrl.searchParams.get("index");
+    const batchId = parsedUrl.searchParams.get("batch");
+    const indexValue = parsedUrl.searchParams.get("index");
     const token = parsedUrl.searchParams.get("token");
 
-    return Boolean(batch && index && token && validateToken(token));
+    const index = Number(indexValue);
+
+    if (!batchId) return null;
+    if (!Number.isInteger(index) || index < 1) return null;
+    if (!token || !validateToken(token)) return null;
+
+    return {
+      batchId,
+      index,
+      token,
+    };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -112,13 +145,22 @@ export async function importTraceQrCsvFile(
 
   const headers = parseCsvLine(lines[0]).map(normalizeHeader);
 
-  const missingColumns = REQUIRED_COLUMNS.filter(
-    (column) => !headers.includes(column)
-  );
+  const isFullFormat = hasColumns(headers, FULL_FORMAT_COLUMNS);
+  const isLegacyFormat = hasColumns(headers, LEGACY_FORMAT_COLUMNS);
 
-  if (missingColumns.length > 0) {
+  if (!isFullFormat && !isLegacyFormat) {
+    const missingFullColumns = getMissingColumns(headers, FULL_FORMAT_COLUMNS);
+    const missingLegacyColumns = getMissingColumns(
+      headers,
+      LEGACY_FORMAT_COLUMNS
+    );
+
     throw new Error(
-      `El CSV no tiene las columnas requeridas: ${missingColumns.join(", ")}`
+      [
+        "El CSV no tiene un formato compatible.",
+        `Formato nuevo, faltan: ${missingFullColumns.join(", ")}`,
+        `Formato anterior, faltan: ${missingLegacyColumns.join(", ")}`,
+      ].join(" ")
     );
   }
 
@@ -133,17 +175,29 @@ export async function importTraceQrCsvFile(
       {}
     );
 
-    const index = Number(record.index);
+    const qrUrlData = extractQrUrlData(record.qr_url);
 
-    if (!record.batch_id) {
+    if (!record.qr_url || !qrUrlData) {
+      throw new Error(`Fila ${rowIndex + 2}: qr_url inválida.`);
+    }
+
+    const batchId = record.batch_id || qrUrlData.batchId;
+    const batchName = record.batch_name || `Lote ${batchId.slice(0, 8)}`;
+    const companyId = record.company_id || "No incluido en CSV";
+    const index = record.index ? Number(record.index) : qrUrlData.index;
+    const shortCode = record.short_code;
+    const token = record.token || record.ucid_hash || qrUrlData.token;
+    const productName = record.product_name || "";
+    const productBrand = record.product_brand || "";
+    const containerType = record.container_type || "No especificado";
+    const status = record.status || "unused";
+    const strategy = record.strategy || "batch_hash";
+
+    if (!batchId) {
       throw new Error(`Fila ${rowIndex + 2}: falta batch_id.`);
     }
 
-    if (!record.company_id) {
-      throw new Error(`Fila ${rowIndex + 2}: falta company_id.`);
-    }
-
-    if (!record.short_code) {
+    if (!shortCode) {
       throw new Error(`Fila ${rowIndex + 2}: falta short_code.`);
     }
 
@@ -151,27 +205,41 @@ export async function importTraceQrCsvFile(
       throw new Error(`Fila ${rowIndex + 2}: index inválido.`);
     }
 
-    if (!validateToken(record.token)) {
+    if (!validateToken(token)) {
       throw new Error(`Fila ${rowIndex + 2}: token inválido.`);
     }
 
-    if (!validateQrUrl(record.qr_url)) {
-      throw new Error(`Fila ${rowIndex + 2}: qr_url inválida.`);
+    if (token.toLowerCase() !== qrUrlData.token.toLowerCase()) {
+      throw new Error(
+        `Fila ${rowIndex + 2}: el token no coincide con el token de qr_url.`
+      );
+    }
+
+    if (batchId !== qrUrlData.batchId) {
+      throw new Error(
+        `Fila ${rowIndex + 2}: el batch_id no coincide con el batch de qr_url.`
+      );
+    }
+
+    if (index !== qrUrlData.index) {
+      throw new Error(
+        `Fila ${rowIndex + 2}: el index no coincide con el index de qr_url.`
+      );
     }
 
     return {
-      batch_id: record.batch_id,
-      batch_name: record.batch_name,
-      company_id: record.company_id,
+      batch_id: batchId,
+      batch_name: batchName,
+      company_id: companyId,
       index,
-      short_code: record.short_code,
+      short_code: shortCode,
       qr_url: record.qr_url,
-      token: record.token,
-      product_name: record.product_name,
-      product_brand: record.product_brand,
-      container_type: record.container_type,
-      status: record.status,
-      strategy: record.strategy,
+      token,
+      product_name: productName,
+      product_brand: productBrand,
+      container_type: containerType,
+      status,
+      strategy,
     };
   });
 
@@ -192,12 +260,21 @@ export async function importTraceQrCsvFile(
   const seenShortCodes = new Set<string>();
   const duplicatedShortCodes = new Set<string>();
 
+  const seenIndexes = new Set<number>();
+  const duplicatedIndexes = new Set<number>();
+
   for (const row of rows) {
     if (seenShortCodes.has(row.short_code)) {
       duplicatedShortCodes.add(row.short_code);
     }
 
     seenShortCodes.add(row.short_code);
+
+    if (seenIndexes.has(row.index)) {
+      duplicatedIndexes.add(row.index);
+    }
+
+    seenIndexes.add(row.index);
   }
 
   if (duplicatedShortCodes.size > 0) {
@@ -207,6 +284,16 @@ export async function importTraceQrCsvFile(
         .join(", ")}`
     );
   }
+
+  if (duplicatedIndexes.size > 0) {
+    throw new Error(
+      `El CSV tiene index duplicados: ${Array.from(duplicatedIndexes)
+        .slice(0, 5)
+        .join(", ")}`
+    );
+  }
+
+  rows.sort((a, b) => a.index - b.index);
 
   return {
     batchId: firstRow.batch_id,
